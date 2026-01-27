@@ -121,7 +121,8 @@ func (ps *PlatformService) LoadLicense() {
 
 	err := ps.ValidateAndSetLicenseBytes([]byte(record.Bytes))
 	if err != nil {
-		ps.logger.Info("License key is invalid.")
+		ps.logger.Info("License key is invalid.", mlog.Err(err))
+		return
 	}
 
 	ps.logger.Info("License key is valid, unlocking enterprise features.")
