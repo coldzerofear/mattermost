@@ -97,8 +97,13 @@ func (us *UserService) GetDefaultProfileImage(user *model.User) ([]byte, error) 
 	if user.IsBot {
 		return botDefaultImage, nil
 	}
-
-	return createProfileImage(user.Username, user.Id, *us.config().FileSettings.InitialFont)
+	username := user.Username
+	if name := strings.TrimSpace(user.FirstName); name != "" {
+		username = name
+	} else if name = strings.TrimSpace(user.LastName); name != "" {
+		username = name
+	}
+	return createProfileImage(username, user.Id, *us.config().FileSettings.InitialFont)
 }
 
 func createProfileImage(username string, userID string, initialFont string) ([]byte, error) {

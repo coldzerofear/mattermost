@@ -924,14 +924,23 @@ func (a *App) GetAuthorizationCode(rctx request.CTX, w http.ResponseWriter, r *h
 
 	redirectURI := siteURL + "/signup/" + service + "/complete"
 
-	authURL := endpoint + "?response_type=code&client_id=" + clientId + "&redirect_uri=" + url.QueryEscape(redirectURI) + "&state=" + url.QueryEscape(state)
-
-	if scope != "" {
-		authURL += "&scope=" + utils.URLEncode(scope)
-	}
+	authURL := endpoint + "?response_type=code&client_id=" + clientId
 
 	if loginHint != "" {
 		authURL += "&login_hint=" + utils.URLEncode(loginHint)
+	}
+
+	// TODO 兼容精益的认证
+	if strings.Contains(scope, "chnlCd") && strings.Contains(scope, "sysCd") {
+		if scope != "" {
+			authURL += "&scope=" + scope
+		}
+		authURL += "&redirect_url=" + url.QueryEscape(redirectURI) + "?state=" + url.QueryEscape(state)
+	} else {
+		if scope != "" {
+			authURL += "&scope=" + utils.URLEncode(scope)
+		}
+		authURL += "&redirect_uri=" + url.QueryEscape(redirectURI) + "&state=" + url.QueryEscape(state)
 	}
 
 	return authURL, nil
@@ -999,19 +1008,46 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 
 	http.SetCookie(w, httpCookie)
 
-	p := url.Values{}
-	p.Set("client_id", *sso.Id)
-	p.Set("client_secret", *sso.Secret)
-	p.Set("code", code)
-	p.Set("grant_type", model.AccessTokenGrantType)
-	p.Set("redirect_uri", redirectURI)
+	authCd := r.URL.Query().Get("authCd")
+	certNo := r.URL.Query().Get("certNo")
+	isJYSSO := authCd != "" && certNo != ""
 
-	req, requestErr := http.NewRequest("POST", *sso.TokenEndpoint, strings.NewReader(p.Encode()))
+	var req *http.Request
+	var requestErr error
+	if isJYSSO {
+		// TODO 精益token
+		var chnlCd, sysCd string
+		if data, err := ParseQueryString(*sso.Scope); err == nil {
+			chnlCd, sysCd = data["chnlCd"], data["sysCd"]
+		}
+		data := map[string]interface{}{
+			"authCd": authCd,
+			"certNo": certNo,
+			"chnlCd": chnlCd,
+			"sysCd":  sysCd,
+		}
+		jsonBytes, _ := json.Marshal(data)
+		req, requestErr = http.NewRequest("POST", *sso.TokenEndpoint, bytes.NewReader(jsonBytes))
+		if requestErr == nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+	} else {
+		p := url.Values{}
+		p.Set("client_id", *sso.Id)
+		p.Set("client_secret", *sso.Secret)
+		p.Set("code", code)
+		p.Set("grant_type", model.AccessTokenGrantType)
+		p.Set("redirect_uri", redirectURI)
+		req, requestErr = http.NewRequest("POST", *sso.TokenEndpoint, strings.NewReader(p.Encode()))
+		if requestErr == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+	}
+
 	if requestErr != nil {
 		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.token_failed.app_error", nil, "", http.StatusInternalServerError).Wrap(requestErr)
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := a.HTTPService().MakeClient(true).Do(req)
@@ -1023,7 +1059,23 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 	var buf bytes.Buffer
 	tee := io.TeeReader(resp.Body, &buf)
 	var ar *model.AccessResponse
-	err = json.NewDecoder(tee).Decode(&ar)
+
+	if isJYSSO {
+		// TODO 组装精益token
+		var jyar *JingyiAccessResponse
+		if err = json.NewDecoder(tee).Decode(&jyar); err == nil {
+			ar = &model.AccessResponse{
+				TokenType:   model.AccessTokenType,
+				AccessToken: jyar.Data.Token,
+			}
+			if !jyar.Success {
+				err = errors.New(jyar.Message)
+			}
+		}
+	} else {
+		err = json.NewDecoder(tee).Decode(&ar)
+	}
+
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.bad_response.app_error", nil, fmt.Sprintf("response_body=%s, status_code=%d, error=%v", buf.String(), resp.StatusCode, err), http.StatusInternalServerError).Wrap(err)
 	}
@@ -1036,8 +1088,29 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.missing.app_error", nil, "response_body="+buf.String(), http.StatusInternalServerError)
 	}
 
-	p = url.Values{}
-	p.Set("access_token", ar.AccessToken)
+	if isJYSSO {
+		// TODO 精益token
+		data := map[string]interface{}{
+			"authToken": ar.AccessToken,
+		}
+		jsonBytes, _ := json.Marshal(data)
+		req, requestErr = http.NewRequest("POST", *sso.UserAPIEndpoint, bytes.NewReader(jsonBytes))
+		if requestErr == nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+	} else {
+		//p := url.Values{}
+		//p.Set("access_token", ar.AccessToken)
+		req, requestErr = http.NewRequest("GET", *sso.UserAPIEndpoint, strings.NewReader(""))
+		if requestErr == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Authorization", "Bearer "+ar.AccessToken)
+		}
+	}
+
+	if requestErr != nil {
+		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.service.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(requestErr)
+	}
 
 	var userFromToken *model.User
 	if ar.IdToken != "" {
@@ -1047,14 +1120,7 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 		}
 	}
 
-	req, requestErr = http.NewRequest("GET", *sso.UserAPIEndpoint, strings.NewReader(""))
-	if requestErr != nil {
-		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.service.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(requestErr)
-	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+ar.AccessToken)
 
 	resp, err = a.HTTPService().MakeClient(true).Do(req)
 	if err != nil {
@@ -1082,6 +1148,33 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 
 	// Note that resp.Body is not closed here, so it must be closed by the caller
 	return resp.Body, stateProps, userFromToken, nil
+}
+
+type JingyiAccessResponse struct {
+	Status     string `json:"status"`
+	Message    string `json:"message"`
+	ReturnTime string `json:"returnTime"`
+	ServcSeqNo string `json:"servcSeqNo"`
+	Success    bool   `json:"success"`
+	Data       struct {
+		Token string `json:"token"`
+	} `json:"data"`
+}
+
+func ParseQueryString(s string) (map[string]string, error) {
+	// 使用 url.ParseQuery 解析
+	values, err := url.ParseQuery(s)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]string)
+	for k, v := range values {
+		if len(v) > 0 {
+			result[k] = v[0] // 取第一个值
+		}
+	}
+	return result, nil
 }
 
 func (a *App) SwitchEmailToOAuth(rctx request.CTX, w http.ResponseWriter, r *http.Request, email, password, code, service string) (string, *model.AppError) {

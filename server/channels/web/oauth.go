@@ -315,7 +315,10 @@ func completeOAuth(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := r.URL.Query().Get("code")
-	if code == "" {
+	// TODO 精益提供的参数
+	authCd := r.URL.Query().Get("authCd")
+	certNo := r.URL.Query().Get("certNo")
+	if code == "" && (authCd == "" || certNo == "") {
 		utils.RenderWebError(c.App.Config(), w, r, http.StatusTemporaryRedirect, url.Values{
 			"type":    []string{"oauth_missing_code"},
 			"service": []string{strings.Title(service)},
