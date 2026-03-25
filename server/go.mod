@@ -3,6 +3,7 @@ module github.com/mattermost/mattermost/server/v8
 go 1.24.6
 
 require (
+	github.com/mozillazg/go-pinyin v0.21.0
 	code.sajari.com/docconv/v2 v2.0.0-pre.4
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/anthonynsimon/bild v0.14.0

@@ -15,13 +15,14 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/golang/freetype"
 	"github.com/golang/freetype/truetype"
-
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/v8/channels/utils/fileutils"
 	"github.com/mattermost/mattermost/server/v8/platform/shared/filestore"
+	"github.com/mozillazg/go-pinyin"
 	xfont "golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
 )
@@ -99,11 +100,29 @@ func (us *UserService) GetDefaultProfileImage(user *model.User) ([]byte, error) 
 	}
 	username := user.Username
 	if name := strings.TrimSpace(user.FirstName); name != "" {
-		username = name
+		username = toPinyinString(name)
 	} else if name = strings.TrimSpace(user.LastName); name != "" {
-		username = name
+		username = toPinyinString(name)
 	}
 	return createProfileImage(username, user.Id, *us.config().FileSettings.InitialFont)
+}
+
+func toPinyinString(s string) string {
+	args := pinyin.NewArgs()
+	var result strings.Builder
+	for _, r := range s {
+		// 中文 → 转拼音
+		if unicode.Is(unicode.Han, r) {
+			py := pinyin.Pinyin(string(r), args)
+			if len(py) > 0 && len(py[0]) > 0 {
+				result.WriteString(py[0][0])
+				continue
+			}
+		}
+		// 非中文 → 原样
+		result.WriteRune(r)
+	}
+	return result.String()
 }
 
 func createProfileImage(username string, userID string, initialFont string) ([]byte, error) {

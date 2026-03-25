@@ -120,9 +120,8 @@ func RegisterPushProxyInterface(f func(*App) einterfaces.PushProxyInterface) {
 }
 
 func (s *Server) initEnterprise() {
-	foo := NewFooCloudInterface()
 	RegisterCloudInterface(func(s *Server) einterfaces.CloudInterface {
-		return foo
+		return NewFooCloudInterface()
 	})
 	if cloudInterface != nil {
 		s.Cloud = cloudInterface(s)
@@ -216,15 +215,17 @@ func (c *FooCloudInterface) GetSelfHostedProducts(userID string) ([]*model.Produ
 	return c.Products, nil
 }
 func (c *FooCloudInterface) GetCloudLimits(userID string) (*model.ProductLimits, error) {
+	messagesLimit := 2000
+	teamsLimit := 999
 	return &model.ProductLimits{
 		Files: &model.FilesLimits{
 			TotalStorage: new(int64),
 		},
 		Messages: &model.MessagesLimits{
-			History: new(int),
+			History: &messagesLimit,
 		},
 		Teams: &model.TeamsLimits{
-			Active: new(int),
+			Active: &teamsLimit,
 		},
 	}, nil
 }
