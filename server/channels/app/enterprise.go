@@ -180,7 +180,7 @@ func NewFooCloudInterface() *FooCloudInterface {
 		ProductID:               "",
 		AddOns:                  []string{},
 		StartAt:                 1767526896149,
-		EndAt:                   2082729600000,
+		EndAt:                   4070880000000,
 		CreateAt:                1767526896148,
 		Seats:                   100000,
 		Status:                  "",
@@ -188,7 +188,7 @@ func NewFooCloudInterface() *FooCloudInterface {
 		LastInvoice:             &model.Invoice{},
 		UpcomingInvoice:         &model.Invoice{},
 		IsFreeTrial:             "false",
-		TrialEndAt:              2082729600000,
+		TrialEndAt:              4070880000000,
 		DelinquentSince:         new(int64),
 		OriginallyLicensedSeats: 0,
 		ComplianceBlocked:       "",
@@ -215,14 +215,13 @@ func (c *FooCloudInterface) GetSelfHostedProducts(userID string) ([]*model.Produ
 	return c.Products, nil
 }
 func (c *FooCloudInterface) GetCloudLimits(userID string) (*model.ProductLimits, error) {
-	messagesLimit := 2000
-	teamsLimit := 999
+	teamsLimit := 9999
 	return &model.ProductLimits{
 		Files: &model.FilesLimits{
 			TotalStorage: new(int64),
 		},
 		Messages: &model.MessagesLimits{
-			History: &messagesLimit,
+			History: new(int),
 		},
 		Teams: &model.TeamsLimits{
 			Active: &teamsLimit,

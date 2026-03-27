@@ -2,7 +2,7 @@
     "id": "qwertyuiopasdfghjklzxcvbnm",
     "issued_at": 1767526896148,
     "starts_at": 1767526896149,
-    "expires_at": 2082729600000,
+    "expires_at": 4070880000000,
     "customer": {
         "id": "qwertyuiopasdfghjklzxcvbnm",
         "name": "admin",
@@ -10,7 +10,7 @@
         "company": "Contoso Ltd"
     },
     "features": {
-        "users": 100000,
+        "users": 99999999,
         "ldap": true,
         "ldap_groups": true,
         "mfa": true,
