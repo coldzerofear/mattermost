@@ -8359,4 +8359,9 @@
     "id": "api.acknowledgement.delete.archived_channel.app_error",
     "translation": "Non è possibile rimuovere una conferma in un canale archiviato."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

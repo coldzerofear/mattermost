@@ -7807,4 +7807,9 @@
     "id": "api.channel.add_user.to.channel.rejected",
     "translation": "사용자는 채널에 참여하는데 필요한 속성(attributes)이 없습니다."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

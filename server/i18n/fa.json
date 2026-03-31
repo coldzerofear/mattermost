@@ -8139,4 +8139,9 @@
     "id": "api.acknowledgement.delete.archived_channel.app_error",
     "translation": "شما نمی توانید یک تاییدیه را در یک کانال بایگانی شده حذف کنید."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

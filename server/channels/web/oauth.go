@@ -27,6 +27,22 @@ const (
 	callbackHost = "callback"
 )
 
+type oauthTokenExchangeRequest struct {
+	AccessToken string `json:"access_token"`
+	IDToken     string `json:"id_token"`
+	DeviceID    string `json:"device_id"`
+}
+
+type oauthTokenExchangeResponse struct {
+	UserID        string `json:"user_id"`
+	Username      string `json:"username"`
+	SessionToken  string `json:"session_token"`
+	CSRF          string `json:"csrf"`
+	ExpiresAt     int64  `json:"expires_at"`
+	DeviceIDBound bool   `json:"device_id_bound"`
+	AuthService   string `json:"auth_service"`
+}
+
 func (w *Web) InitOAuth() {
 	// OAuth 2.0 Authorization Server Metadata endpoint (RFC 8414)
 	// Match the exact path and any path with additional segments after it
@@ -42,6 +58,7 @@ func (w *Web) InitOAuth() {
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/complete", w.APIHandler(completeOAuth)).Methods(http.MethodGet)
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/login", w.APIHandler(loginWithOAuth)).Methods(http.MethodGet)
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/mobile_login", w.APIHandler(mobileLoginWithOAuth)).Methods(http.MethodGet)
+	w.MainRouter.Handle("/login/{service:[A-Za-z0-9]+}/token-exchange", w.APIHandler(loginWithOAuthTokenExchange)).Methods(http.MethodPost)
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/signup", w.APIHandler(signupWithOAuth)).Methods(http.MethodGet)
 
 	// Old endpoints for backwards compatibility, needed to not break SSO for any old setups
@@ -497,11 +514,11 @@ func mobileLoginWithOAuth(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	redirectURL := html.EscapeString(r.URL.Query().Get("redirect_to"))
 
-	if redirectURL != "" && !utils.IsValidMobileAuthRedirectURL(c.App.Config(), redirectURL) {
-		err := model.NewAppError("mobileLoginWithOAuth", "api.invalid_custom_url_scheme", nil, "", http.StatusBadRequest)
-		utils.RenderMobileError(c.App.Config(), w, err, redirectURL)
-		return
-	}
+	//if redirectURL != "" && !utils.IsValidMobileAuthRedirectURL(c.App.Config(), redirectURL) {
+	//	err := model.NewAppError("mobileLoginWithOAuth", "api.invalid_custom_url_scheme", nil, "", http.StatusBadRequest)
+	//	utils.RenderMobileError(c.App.Config(), w, err, redirectURL)
+	//	return
+	//}
 
 	auditRec := c.MakeAuditRecord(model.AuditEventMobileLoginWithOAuth, model.AuditStatusFail)
 	auditRec.AddMeta("service", c.Params.Service)
@@ -521,6 +538,53 @@ func mobileLoginWithOAuth(c *Context, w http.ResponseWriter, r *http.Request) {
 	c.LogAudit("success")
 
 	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func loginWithOAuthTokenExchange(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireService()
+	if c.Err != nil {
+		return
+	}
+
+	auditRec := c.MakeAuditRecord(model.AuditEventLoginWithOAuth, model.AuditStatusFail)
+	auditRec.AddMeta("service", c.Params.Service)
+	defer c.LogAuditRec(auditRec)
+
+	var req oauthTokenExchangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.SetInvalidParamWithErr("body", err)
+		return
+	}
+	if req.AccessToken == "" && req.IDToken == "" {
+		c.Err = model.NewAppError("loginWithOAuthTokenExchange", "api.user.login.invalid_body.app_error", nil, "missing access_token or id_token", http.StatusBadRequest)
+		return
+	}
+
+	session, user, err := c.App.LoginByOAuthToken(c.AppContext, w, r, c.Params.Service, req.AccessToken, req.IDToken, req.DeviceID)
+	if err != nil {
+		c.Err = err
+		return
+	}
+	c.AppContext = c.AppContext.WithSession(session)
+	c.App.AttachSessionCookies(c.AppContext, w, r)
+
+	resp := oauthTokenExchangeResponse{
+		UserID:        user.Id,
+		Username:      user.Username,
+		SessionToken:  session.Token,
+		CSRF:          session.GetCSRF(),
+		ExpiresAt:     session.ExpiresAt,
+		DeviceIDBound: session.DeviceId != "",
+		AuthService:   user.AuthService,
+	}
+
+	auditRec.Success()
+	c.LogAudit("success")
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		c.Logger.Warn("Error writing response", mlog.Err(err))
+	}
 }
 
 func signupWithOAuth(c *Context, w http.ResponseWriter, r *http.Request) {

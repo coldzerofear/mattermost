@@ -9899,4 +9899,9 @@
     "id": "model.scheduled_post.is_valid.empty_post.app_error",
     "translation": "無法排程空白的訊息。排程訊息至少需包含訊息或附件檔案。"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

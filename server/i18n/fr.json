@@ -8823,4 +8823,9 @@
     "id": "api.admin.add_certificate.app_error",
     "translation": "Échec de l’ajout du certificat."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

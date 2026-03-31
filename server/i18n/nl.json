@@ -11099,4 +11099,9 @@
     "id": "app.content_flagging.set_thread_replies_properties.app_error",
     "translation": "Het is niet gelukt om eigenschappen in te stellen op antwoorden op het draadje voor het gemarkeerde bericht."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

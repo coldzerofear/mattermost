@@ -11071,4 +11071,9 @@
     "id": "model.config.is_valid.autotranslation.timeouts.notification.app_error",
     "translation": "Tidsgränsen för avisering av autotranslation är ogiltig. Måste vara ett positivt tal."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

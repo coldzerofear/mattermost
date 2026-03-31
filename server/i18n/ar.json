@@ -71,4 +71,9 @@
     "id": "api.admin.add_certificate.app_error",
     "translation": "فشل في إضافة الشهادة."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

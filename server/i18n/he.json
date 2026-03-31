@@ -183,4 +183,9 @@
     "id": "web.error.unsupported_browser.download",
     "translation": "הורד את היישומון"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

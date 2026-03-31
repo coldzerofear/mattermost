@@ -171,4 +171,9 @@
     "id": "api.channel.channel_member_counts_by_group.license.error",
     "translation": "Zure lizentziak ez du talderik onartzen"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

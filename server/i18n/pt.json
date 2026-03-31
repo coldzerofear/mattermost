@@ -811,4 +811,9 @@
     "id": "api.channel.post_update_channel_displayname_message_and_forget.create_post.error",
     "translation": "Não foi possível publicar a mensagem de atualização displayname"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

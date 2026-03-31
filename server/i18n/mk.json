@@ -919,4 +919,9 @@
     "id": "api.command_channel_rename.permission.app_error",
     "translation": "Немате соодветни дозволи за преименување на каналот."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

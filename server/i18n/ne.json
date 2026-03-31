@@ -23,4 +23,9 @@
     "id": "api.admin.add_certificate.array.app_error",
     "translation": "'प्रमाणपत्र' अन्तर्गत अनुरोधमा कुनै फाइल छैन।"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

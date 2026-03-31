@@ -349,18 +349,24 @@ func (a *App) createUserOrGuest(rctx request.CTX, user *model.User, guest bool) 
 }
 
 func (a *App) CreateOAuthUser(rctx request.CTX, service string, userData io.Reader, inviteToken string, inviteId string, tokenUser *model.User) (*model.User, *model.AppError) {
-	if !*a.Config().TeamSettings.EnableUserCreation {
-		return nil, model.NewAppError("CreateOAuthUser", "api.user.create_user.disabled.app_error", nil, "", http.StatusNotImplemented)
-	}
-
 	provider, e := a.getSSOProvider(service)
 	if e != nil {
 		return nil, e
 	}
-	user, err1 := provider.GetUserFromJSON(rctx, userData, tokenUser)
+
+	oauthUser, err1 := provider.GetUserFromJSON(rctx, userData, tokenUser)
 	if err1 != nil {
 		return nil, model.NewAppError("CreateOAuthUser", "api.user.create_oauth_user.create.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(err1)
 	}
+
+	return a.createOAuthUserFromResolvedUser(rctx, service, provider, oauthUser, inviteToken, inviteId)
+}
+
+func (a *App) createOAuthUserFromResolvedUser(rctx request.CTX, service string, provider einterfaces.OAuthProvider, user *model.User, inviteToken string, inviteId string) (*model.User, *model.AppError) {
+	if !*a.Config().TeamSettings.EnableUserCreation {
+		return nil, model.NewAppError("CreateOAuthUser", "api.user.create_user.disabled.app_error", nil, "", http.StatusNotImplemented)
+	}
+
 	if user.AuthService == "" {
 		user.AuthService = service
 	}
@@ -381,9 +387,6 @@ func (a *App) CreateOAuthUser(rctx request.CTX, service string, userData io.Read
 
 	userByEmail, _ := a.ch.srv.userService.GetUserByEmail(user.Email)
 	if userByEmail != nil {
-		//if userByEmail.AuthService == "" {
-		//	return nil, model.NewAppError("CreateOAuthUser", "api.user.create_oauth_user.already_attached.app_error", map[string]any{"Service": service, "Auth": model.UserAuthServiceEmail}, "email="+user.Email, http.StatusBadRequest)
-		//}
 		if provider.IsSameUser(rctx, userByEmail, user) {
 			if _, err := a.Srv().Store().User().UpdateAuthData(userByEmail.Id, user.AuthService, user.AuthData, "", false); err != nil {
 				// if the user is not updated, write a warning to the log, but don't prevent user login
@@ -2310,6 +2313,11 @@ func (a *App) UpdateOAuthUserAttrs(rctx request.CTX, userData io.Reader, user *m
 	if err1 != nil {
 		return model.NewAppError("UpdateOAuthUserAttrs", "api.user.update_oauth_user_attrs.get_user.app_error", map[string]any{"Service": service}, "", http.StatusBadRequest).Wrap(err1)
 	}
+
+	return a.updateOAuthUserAttrsFromResolvedUser(rctx, user, oauthUser)
+}
+
+func (a *App) updateOAuthUserAttrsFromResolvedUser(rctx request.CTX, user *model.User, oauthUser *model.User) *model.AppError {
 
 	userAttrsChanged := false
 

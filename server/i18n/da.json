@@ -1103,4 +1103,9 @@
     "id": "api.custom_profile_attributes.license_error",
     "translation": "Din licens understøtter ikke brugerdefinerede profilattributter."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

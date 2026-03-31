@@ -887,4 +887,9 @@
     "id": "api.command.execute_command.deleted.error",
     "translation": "Negalima paleisti komandos ištrintame kanale."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

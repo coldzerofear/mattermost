@@ -11071,4 +11071,9 @@
     "id": "app.content_flagging.search_team_reviewers.app_error",
     "translation": "Arama ifadesi takım içerik denetleyicilerinde aranamadı."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

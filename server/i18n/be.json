@@ -8287,4 +8287,9 @@
     "id": "app.user.update_thread_read_for_user_by_post.app_error",
     "translation": "Недапушчальны post_id"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

@@ -8522,4 +8522,9 @@
     "id": "api.drafts.disabled.app_error",
     "translation": "Tervezetek szolgáltatás le van tiltva."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

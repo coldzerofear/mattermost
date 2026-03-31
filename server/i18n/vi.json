@@ -9009,4 +9009,9 @@
     "id": "api.channel.add_user.to.channel.rejected",
     "translation": "Người dùng không có các thuộc tính cần thiết để tham gia kênh."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

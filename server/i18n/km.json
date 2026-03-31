@@ -103,4 +103,9 @@
     "id": "April",
     "translation": "មេសា​"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

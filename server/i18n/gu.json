@@ -79,4 +79,9 @@
     "id": "api.admin.add_certificate.saving.app_error",
     "translation": "પ્રમાણપત્ર ફાઇલ સાચવી શકાઈ નથી."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

@@ -9963,4 +9963,9 @@
     "id": "api.command_share.service_inactive",
     "translation": "O serviço de Canais Compartilhados está ativado, mas não está ativo."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

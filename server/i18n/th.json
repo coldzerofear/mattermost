@@ -95,4 +95,9 @@
     "id": "api.admin.get_brand_image.storage.app_error",
     "translation": "พื้นที่การเก็บรูปภาพไม่ได้ถูกต้องค่าไว้"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

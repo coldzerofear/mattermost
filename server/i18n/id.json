@@ -3585,4 +3585,9 @@
     "id": "api.config.update_config.clear_siteurl.app_error",
     "translation": "URL situs tidak dapat dibersihkan."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

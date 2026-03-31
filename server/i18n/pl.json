@@ -11091,4 +11091,9 @@
     "id": "app.content_flagging.set_thread_replies_properties.app_error",
     "translation": "Nie udało się ustawić wartości właściwości w odpowiedziach wątku dla oflagowanego postu."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

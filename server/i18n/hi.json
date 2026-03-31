@@ -7931,4 +7931,9 @@
     "id": "api.acknowledgement.delete.archived_channel.app_error",
     "translation": "आप संग्रहीत चैनल में पावती नहीं निकाल सकते।"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

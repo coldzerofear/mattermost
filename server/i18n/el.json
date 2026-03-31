@@ -3394,4 +3394,9 @@
     "id": "api.server.license_up_for_renewal.error_sending_email",
     "translation": "Αποτυχία αποστολής άδειας χρήσης για ανανέωση μηνυμάτων emails"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

@@ -8987,4 +8987,9 @@
     "id": "api.user.invalidate_password_recovery_tokens.error",
     "translation": "No fue posible onbtener tokes por tipo cuando se invalidaban los tokens de recuperación de contraseña"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

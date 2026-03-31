@@ -402,5 +402,9 @@
   {
     "id": "April",
     "translation": "ሚያዚያ"
+  },
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
   }
 ]

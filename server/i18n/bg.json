@@ -8327,4 +8327,9 @@
     "id": "api.context.outgoing_oauth_connection.not_available.configuration_disabled",
     "translation": "Изходящите OAuth връзки са недостъпни на този сървър."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

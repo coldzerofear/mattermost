@@ -1174,4 +1174,9 @@
     "id": "api.command_remove.message.app_error",
     "translation": "/remove അല്ലെങ്കിൽ /kick കമാൻഡ് ഉപയോഗിച്ച് ഒരു സന്ദേശം നൽകണം."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

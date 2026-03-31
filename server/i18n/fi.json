@@ -5174,4 +5174,9 @@
     "id": "api.channel.create_group.remote_restricted.app_error",
     "translation": "Ryhmäkanavaa ei voi luoda etäkäyttäjien kanssa"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

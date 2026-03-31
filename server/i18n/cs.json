@@ -10879,4 +10879,9 @@
     "id": "api.encoding_error",
     "translation": "Došlo k chybě při zpracování JSON pro odpověď API"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

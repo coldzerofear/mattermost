@@ -1135,4 +1135,9 @@
       "other": "Nije uspelo slanje {{.Count}} zakazanih objava."
     }
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

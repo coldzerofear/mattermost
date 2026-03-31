@@ -10055,4 +10055,9 @@
     "id": "app.custom_profile_attributes.sanitize_and_validate.app_error",
     "translation": "Неверное значение свойства Атрибут : {{.AttributeName}} ({{.Reason}})."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

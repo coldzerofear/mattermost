@@ -794,6 +794,125 @@ func (a *App) LoginByOAuth(rctx request.CTX, service string, userData io.Reader,
 	return user, nil
 }
 
+func (a *App) LoginByOAuthToken(rctx request.CTX, w http.ResponseWriter, r *http.Request, service, accessToken, idToken, deviceID string) (*model.Session, *model.User, *model.AppError) {
+	provider, appErr := a.getSSOProvider(service)
+	if appErr != nil {
+		return nil, nil, appErr
+	}
+
+	var user *model.User
+	if accessToken != "" {
+		userBody, tokenUser, err := a.GetOAuthUserInfoByAccessToken(rctx, provider, service, accessToken)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer userBody.Close()
+
+		user, appErr = a.LoginByOAuth(rctx, service, userBody, "", "", tokenUser)
+		if appErr != nil {
+			return nil, nil, appErr
+		}
+	} else {
+		user, appErr = a.LoginByIDToken(rctx, provider, service, idToken)
+		if appErr != nil {
+			return nil, nil, appErr
+		}
+	}
+
+	isOAuthUser := user.IsOAuthUser()
+	session, appErr := a.DoLogin(rctx, w, r, user, deviceID, deviceID != "", isOAuthUser, false)
+	if appErr != nil {
+		return nil, nil, appErr
+	}
+
+	return session, user, nil
+}
+
+func (a *App) LoginByIDToken(rctx request.CTX, provider einterfaces.OAuthProvider, service, idToken string) (*model.User, *model.AppError) {
+	oauthUser, err := provider.GetUserFromIdToken(rctx, idToken)
+	if err != nil {
+		return nil, model.NewAppError("LoginByIDToken", "api.user.authorize_oauth_user.token_failed.app_error", nil, "", http.StatusInternalServerError).Wrap(err)
+	}
+	if oauthUser == nil || oauthUser.AuthData == nil || *oauthUser.AuthData == "" {
+		return nil, model.NewAppError("LoginByIDToken", "api.user.login_by_oauth.parse.app_error", map[string]any{"Service": service}, "", http.StatusBadRequest)
+	}
+
+	user, appErr := a.GetUserByAuth(model.NewPointer(*oauthUser.AuthData), service)
+	if appErr != nil {
+		if appErr.Id == MissingAuthAccountError {
+			return a.createOAuthUserFromResolvedUser(rctx, service, provider, oauthUser, "", "")
+		}
+		return nil, appErr
+	}
+
+	if user.IsBot {
+		return nil, model.NewAppError("LoginByIDToken", "api.user.login_by_oauth.bot_login_forbidden.app_error", nil, "", http.StatusForbidden)
+	}
+
+	if appErr = a.updateOAuthUserAttrsFromResolvedUser(rctx, user, oauthUser); appErr != nil {
+		return nil, appErr
+	}
+
+	return user, nil
+}
+
+func (a *App) GetOAuthUserInfoByAccessToken(rctx request.CTX, provider einterfaces.OAuthProvider, service, accessToken string) (io.ReadCloser, *model.User, *model.AppError) {
+	sso, err := provider.GetSSOSettings(rctx, a.Config(), service)
+	if err != nil {
+		return nil, nil, model.NewAppError("GetOAuthUserInfoByAccessToken.GetSSOSettings", "api.user.get_authorization_code.endpoint.app_error", nil, "", http.StatusNotImplemented).Wrap(err)
+	}
+
+	requestErr := error(nil)
+	var req *http.Request
+	if isJingyiOAuthConfig(*sso.Scope) {
+		data := map[string]any{"authToken": accessToken}
+		jsonBytes, _ := json.Marshal(data)
+		req, requestErr = http.NewRequest(http.MethodPost, *sso.UserAPIEndpoint, bytes.NewReader(jsonBytes))
+		if requestErr == nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+	} else {
+		req, requestErr = http.NewRequest(http.MethodGet, *sso.UserAPIEndpoint, strings.NewReader(""))
+		if requestErr == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Authorization", "Bearer "+accessToken)
+		}
+	}
+
+	if requestErr != nil {
+		return nil, nil, model.NewAppError("GetOAuthUserInfoByAccessToken", "api.user.authorize_oauth_user.service.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(requestErr)
+	}
+
+	req.Header.Set("Accept", "application/json")
+
+	resp, doErr := a.HTTPService().MakeClient(true).Do(req)
+	if doErr != nil {
+		return nil, nil, model.NewAppError("GetOAuthUserInfoByAccessToken", "api.user.authorize_oauth_user.service.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(doErr)
+	} else if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyString := string(bodyBytes)
+
+		rctx.Logger().Error("Error getting OAuth user", mlog.Int("response", resp.StatusCode), mlog.String("body_string", bodyString))
+
+		if service == model.ServiceGitlab && resp.StatusCode == http.StatusForbidden && strings.Contains(bodyString, "Terms of Service") {
+			urlValue, err := url.Parse(*sso.UserAPIEndpoint)
+			if err != nil {
+				return nil, nil, model.NewAppError("GetOAuthUserInfoByAccessToken", model.NoTranslation, nil, "", http.StatusInternalServerError).Wrap(errors.Wrapf(err, "error parsing %s", *sso.UserAPIEndpoint))
+			}
+			return nil, nil, model.NewAppError("GetOAuthUserInfoByAccessToken", "oauth.gitlab.tos.error", map[string]any{"URL": urlValue.Hostname()}, "", http.StatusBadRequest)
+		}
+
+		return nil, nil, model.NewAppError("GetOAuthUserInfoByAccessToken", "api.user.authorize_oauth_user.response.app_error", nil, "response_body="+bodyString, http.StatusInternalServerError)
+	}
+
+	return resp.Body, nil, nil
+}
+
+func isJingyiOAuthConfig(scope string) bool {
+	return strings.Contains(scope, "chnlCd") && strings.Contains(scope, "sysCd")
+}
+
 func (a *App) CompleteSwitchWithOAuth(rctx request.CTX, service string, userData io.Reader, email string, tokenUser *model.User) (*model.User, *model.AppError) {
 	provider, e := a.getSSOProvider(service)
 	if e != nil {
@@ -1088,30 +1207,6 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.missing.app_error", nil, "response_body="+buf.String(), http.StatusInternalServerError)
 	}
 
-	if isJYSSO {
-		// TODO 精益token
-		data := map[string]interface{}{
-			"authToken": ar.AccessToken,
-		}
-		jsonBytes, _ := json.Marshal(data)
-		req, requestErr = http.NewRequest("POST", *sso.UserAPIEndpoint, bytes.NewReader(jsonBytes))
-		if requestErr == nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-	} else {
-		//p := url.Values{}
-		//p.Set("access_token", ar.AccessToken)
-		req, requestErr = http.NewRequest("GET", *sso.UserAPIEndpoint, strings.NewReader(""))
-		if requestErr == nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.Header.Set("Authorization", "Bearer "+ar.AccessToken)
-		}
-	}
-
-	if requestErr != nil {
-		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.service.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(requestErr)
-	}
-
 	var userFromToken *model.User
 	if ar.IdToken != "" {
 		userFromToken, err = provider.GetUserFromIdToken(rctx, ar.IdToken)
@@ -1120,34 +1215,13 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 		}
 	}
 
-	req.Header.Set("Accept", "application/json")
-
-	resp, err = a.HTTPService().MakeClient(true).Do(req)
-	if err != nil {
-		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.service.app_error", map[string]any{"Service": service}, "", http.StatusInternalServerError).Wrap(err)
-	} else if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-
-		// Ignore the error below because the resulting string will just be the empty string if bodyBytes is nil
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		bodyString := string(bodyBytes)
-
-		rctx.Logger().Error("Error getting OAuth user", mlog.Int("response", resp.StatusCode), mlog.String("body_string", bodyString))
-
-		if service == model.ServiceGitlab && resp.StatusCode == http.StatusForbidden && strings.Contains(bodyString, "Terms of Service") {
-			url, err := url.Parse(*sso.UserAPIEndpoint)
-			if err != nil {
-				return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", model.NoTranslation, nil, "", http.StatusInternalServerError).Wrap(errors.Wrapf(err, "error parsing %s", *sso.UserAPIEndpoint))
-			}
-			// Return a nicer error when the user hasn't accepted GitLab's terms of service
-			return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "oauth.gitlab.tos.error", map[string]any{"URL": url.Hostname()}, "", http.StatusBadRequest)
-		}
-
-		return nil, stateProps, nil, model.NewAppError("AuthorizeOAuthUser", "api.user.authorize_oauth_user.response.app_error", nil, "response_body="+bodyString, http.StatusInternalServerError)
+	userBody, _, appErr := a.GetOAuthUserInfoByAccessToken(rctx, provider, service, ar.AccessToken)
+	if appErr != nil {
+		return nil, stateProps, nil, appErr
 	}
 
-	// Note that resp.Body is not closed here, so it must be closed by the caller
-	return resp.Body, stateProps, userFromToken, nil
+	// Note that userBody is not closed here, so it must be closed by the caller
+	return userBody, stateProps, userFromToken, nil
 }
 
 type JingyiAccessResponse struct {

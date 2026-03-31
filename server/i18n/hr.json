@@ -1095,4 +1095,9 @@
     "id": "api.team.remove_user_from_team.removed",
     "translation": "%v je uklonjen/a iz tima."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

@@ -10961,4 +10961,9 @@
     "id": "app.upload.create.cannot_upload_to_restricted_dm.error",
     "translation": "制限されたダイレクトメッセージにファイルをアップロードできません。"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

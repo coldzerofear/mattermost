@@ -10789,4 +10789,9 @@
     "id": "app.submit_interactive_dialog.invalid_response",
     "translation": "收到来自交互式对话提交的无效响应。"
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]

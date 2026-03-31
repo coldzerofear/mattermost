@@ -10487,4 +10487,9 @@
     "id": "api.content_flagging.error.user_not_reviewer",
     "translation": "Користувач не є рецензентом контенту."
   }
+,
+  {
+    "id": "api.user.login.invalid_body.app_error",
+    "translation": "Invalid login request body."
+  }
 ]
