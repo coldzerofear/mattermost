@@ -60,6 +60,7 @@ type PushNotification struct {
 	post               *model.Post
 	user               *model.User
 	channel            *model.Channel
+	senderUsername     string
 	senderName         string
 	channelName        string
 	explicitMention    bool
@@ -67,7 +68,7 @@ type PushNotification struct {
 	replyToThreadType  string
 }
 
-func (a *App) sendPushNotificationSync(rctx request.CTX, post *model.Post, user *model.User, channel *model.Channel, channelName string, senderName string,
+func (a *App) sendPushNotificationSync(rctx request.CTX, post *model.Post, user *model.User, channel *model.Channel, channelName string, senderUsername string, senderName string,
 	explicitMention bool, channelWideMention bool, replyToThreadType string,
 ) *model.AppError {
 	cfg := a.Config()
@@ -78,6 +79,7 @@ func (a *App) sendPushNotificationSync(rctx request.CTX, post *model.Post, user 
 		user,
 		channel,
 		channelName,
+		senderUsername,
 		senderName,
 		explicitMention,
 		channelWideMention,
@@ -236,6 +238,7 @@ func (a *App) sendPushNotification(notification *PostNotification, user *model.U
 	nameFormat := a.GetNotificationNameFormat(user)
 
 	channelName := notification.GetChannelName(nameFormat, user.Id)
+	senderUsername := notification.Sender.Username
 	senderName := notification.GetSenderName(nameFormat, *cfg.ServiceSettings.EnablePostUsernameOverride)
 
 	select {
@@ -244,6 +247,7 @@ func (a *App) sendPushNotification(notification *PostNotification, user *model.U
 		post:               post,
 		user:               user,
 		channel:            channel,
+		senderUsername:     senderUsername,
 		senderName:         senderName,
 		channelName:        channelName,
 		explicitMention:    explicitMention,
@@ -440,6 +444,7 @@ func (hub *PushNotificationsHub) start(rctx request.CTX) {
 						notification.user,
 						notification.channel,
 						notification.channelName,
+						notification.senderUsername,
 						notification.senderName,
 						notification.explicitMention,
 						notification.channelWideMention,
@@ -705,7 +710,7 @@ func doesStatusAllowPushNotification(userNotifyProps model.StringMap, status *mo
 	return model.NotificationReasonUserIsActive
 }
 
-func (a *App) BuildPushNotificationMessage(rctx request.CTX, contentsConfig string, post *model.Post, user *model.User, channel *model.Channel, channelName string, senderName string,
+func (a *App) BuildPushNotificationMessage(rctx request.CTX, contentsConfig string, post *model.Post, user *model.User, channel *model.Channel, channelName string, senderUsername string, senderName string,
 	explicitMention bool, channelWideMention bool, replyToThreadType string,
 ) (*model.PushNotification, *model.AppError) {
 	var msg *model.PushNotification
@@ -718,7 +723,7 @@ func (a *App) BuildPushNotificationMessage(rctx request.CTX, contentsConfig stri
 	if contentsConfig == model.IdLoadedNotification {
 		msg = a.buildIdLoadedPushNotificationMessage(rctx, channel, post, user)
 	} else {
-		msg = a.buildFullPushNotificationMessage(rctx, contentsConfig, post, user, channel, channelName, senderName, explicitMention, channelWideMention, replyToThreadType)
+		msg = a.buildFullPushNotificationMessage(rctx, contentsConfig, post, user, channel, channelName, senderUsername, senderName, explicitMention, channelWideMention, replyToThreadType)
 	}
 
 	badgeCount, err := a.getUserBadgeCount(user.Id, a.IsCRTEnabledForUser(rctx, user.Id))
@@ -800,20 +805,21 @@ func (a *App) buildIdLoadedPushNotificationMessage(rctx request.CTX, channel *mo
 	return msg
 }
 
-func (a *App) buildFullPushNotificationMessage(rctx request.CTX, contentsConfig string, post *model.Post, user *model.User, channel *model.Channel, channelName string, senderName string,
+func (a *App) buildFullPushNotificationMessage(rctx request.CTX, contentsConfig string, post *model.Post, user *model.User, channel *model.Channel, channelName string, senderUsername string, senderName string,
 	explicitMention bool, channelWideMention bool, replyToThreadType string,
 ) *model.PushNotification {
 	msg := &model.PushNotification{
-		Category:     model.CategoryCanReply,
-		Version:      model.PushMessageV2,
-		Type:         model.PushTypeMessage,
-		TeamId:       channel.TeamId,
-		ChannelId:    channel.Id,
-		PostId:       post.Id,
-		RootId:       post.RootId,
-		SenderId:     post.UserId,
-		IsCRTEnabled: false,
-		IsIdLoaded:   false,
+		Category:       model.CategoryCanReply,
+		Version:        model.PushMessageV2,
+		Type:           model.PushTypeMessage,
+		TeamId:         channel.TeamId,
+		ChannelId:      channel.Id,
+		PostId:         post.Id,
+		RootId:         post.RootId,
+		SenderId:       post.UserId,
+		SenderUsername: senderUsername,
+		IsCRTEnabled:   false,
+		IsIdLoaded:     false,
 	}
 
 	userLocale := i18n.GetUserTranslations(user.Locale)

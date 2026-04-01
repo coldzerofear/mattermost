@@ -1080,7 +1080,7 @@ func TestBuildPushNotificationMessageMentions(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			receiver.NotifyProps["push"] = tc.pushNotifyProps
-			msg, err := th.App.BuildPushNotificationMessage(th.Context, model.FullNotification, post, receiver, channel1, channel1.Name, sender.Username, tc.explicitMention, tc.channelWideMention, tc.replyToThreadType)
+			msg, err := th.App.BuildPushNotificationMessage(th.Context, model.FullNotification, post, receiver, channel1, channel1.Name, sender.Username, sender.Username, tc.explicitMention, tc.channelWideMention, tc.replyToThreadType)
 			require.Nil(t, err)
 			assert.Equal(t, tc.expectedBadge, msg.Badge)
 		})
@@ -1646,7 +1646,7 @@ func TestPushNotificationAttachment(t *testing.T) {
 	ch := &model.Channel{}
 
 	t.Run("The notification should contain the fallback message from the attachment", func(t *testing.T) {
-		pn := th.App.buildFullPushNotificationMessage(th.Context, "full", post, user, ch, ch.Name, "test", false, false, "")
+		pn := th.App.buildFullPushNotificationMessage(th.Context, "full", post, user, ch, ch.Name, user.Username, "test", false, false, "")
 		assert.Equal(t, "test: hello world\nfallback text", pn.Message)
 	})
 

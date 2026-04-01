@@ -77,6 +77,7 @@ type PushNotification struct {
 	Type             string      `json:"type,omitempty"`
 	SubType          PushSubType `json:"sub_type,omitempty"`
 	SenderId         string      `json:"sender_id,omitempty"`
+	SenderUsername   string      `json:"sender_username,omitempty"`
 	SenderName       string      `json:"sender_name,omitempty"`
 	OverrideUsername string      `json:"override_username,omitempty"`
 	OverrideIconURL  string      `json:"override_icon_url,omitempty"`
