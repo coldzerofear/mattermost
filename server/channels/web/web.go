@@ -94,7 +94,8 @@ func IsOAuthAPICall(a *app.App, r *http.Request) bool {
 		return true
 	}
 
-	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, path.Join(subpath, "login")+"/") && strings.HasSuffix(r.URL.Path, "/token-exchange") {
+	if (r.Method == "POST" || (r.Method == "GET" && r.URL.Query().Get("redirect_to") == "")) &&
+		strings.HasPrefix(r.URL.Path, path.Join(subpath, "login")+"/") && strings.HasSuffix(r.URL.Path, "/token-exchange") {
 		return true
 	}
 

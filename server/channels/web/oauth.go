@@ -30,7 +30,7 @@ const (
 type oauthTokenExchangeRequest struct {
 	AccessToken string `json:"access_token"`
 	IDToken     string `json:"id_token"`
-	DeviceID    string `json:"device_id"`
+	DeviceID    string `json:"device_id,omitempty"`
 }
 
 type oauthTokenExchangeResponse struct {
@@ -59,6 +59,7 @@ func (w *Web) InitOAuth() {
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/login", w.APIHandler(loginWithOAuth)).Methods(http.MethodGet)
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/mobile_login", w.APIHandler(mobileLoginWithOAuth)).Methods(http.MethodGet)
 	w.MainRouter.Handle("/login/{service:[A-Za-z0-9]+}/token-exchange", w.APIHandler(loginWithOAuthTokenExchange)).Methods(http.MethodPost)
+	w.MainRouter.Handle("/login/{service:[A-Za-z0-9]+}/token-exchange", w.APIHandler(loginWithOAuthTokenExchange)).Methods(http.MethodGet)
 	w.MainRouter.Handle("/oauth/{service:[A-Za-z0-9]+}/signup", w.APIHandler(signupWithOAuth)).Methods(http.MethodGet)
 
 	// Old endpoints for backwards compatibility, needed to not break SSO for any old setups
@@ -551,10 +552,21 @@ func loginWithOAuthTokenExchange(c *Context, w http.ResponseWriter, r *http.Requ
 	defer c.LogAuditRec(auditRec)
 
 	var req oauthTokenExchangeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		c.SetInvalidParamWithErr("body", err)
-		return
+	var redirectUrl string
+	if r.Method == http.MethodGet {
+		req = oauthTokenExchangeRequest{
+			AccessToken: r.URL.Query().Get("access_token"),
+			IDToken:     r.URL.Query().Get("id_token"),
+			DeviceID:    r.URL.Query().Get("device_id"),
+		}
+		redirectUrl = r.URL.Query().Get("redirect_to")
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			c.SetInvalidParamWithErr("body", err)
+			return
+		}
 	}
+
 	if req.AccessToken == "" && req.IDToken == "" {
 		c.Err = model.NewAppError("loginWithOAuthTokenExchange", "api.user.login.invalid_body.app_error", nil, "missing access_token or id_token", http.StatusBadRequest)
 		return
@@ -580,6 +592,12 @@ func loginWithOAuthTokenExchange(c *Context, w http.ResponseWriter, r *http.Requ
 
 	auditRec.Success()
 	c.LogAudit("success")
+
+	if redirectUrl != "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		http.Redirect(w, r, redirectUrl, http.StatusFound)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
