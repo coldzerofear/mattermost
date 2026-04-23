@@ -29,7 +29,13 @@ func (ps *PlatformService) NewClusterDiscoveryService() *ClusterDiscoveryService
 }
 
 func (ps *PlatformService) IsLeader() bool {
-	if ps.License() != nil && *ps.Config().ClusterSettings.Enable && ps.clusterIFace != nil {
+	// Community-edition HA: if a ClusterInterface implementation has been
+	// injected (see channels/app/platform/clustercommunity), trust its
+	// leader election regardless of license state. Upstream gated this on
+	// ps.License() != nil, which would force every replica to self-identify
+	// as leader in community deployments and cause duplicate scheduled-job
+	// execution.
+	if ps.clusterIFace != nil && *ps.Config().ClusterSettings.Enable {
 		return ps.clusterIFace.IsLeader()
 	}
 

@@ -16,6 +16,11 @@ import (
 
 	// Enterprise Imports
 	_ "github.com/mattermost/mattermost/server/v8/enterprise"
+
+	// Community-edition cluster implementations (Redis / PostgreSQL).
+	// Registers a ClusterInterface factory via init(); the factory is only
+	// invoked when MM_CLUSTER_MODE is set to redis or postgres at runtime.
+	_ "github.com/mattermost/mattermost/server/v8/channels/app/platform/clustercommunity"
 )
 
 func main() {
