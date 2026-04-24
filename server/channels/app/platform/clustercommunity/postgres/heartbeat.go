@@ -35,6 +35,14 @@ const messageRetention = 5 * time.Minute
 // Tests construct Cluster with discoveryFactory = nil. In that case the
 // heartbeat is skipped — the caller is presumably controlling the DB
 // directly and does not need a ping goroutine.
+//
+// ClusterDiscovery.Id is validated by model.IsValidId to be a 26-char
+// alphanumeric string (model.NewId format). Our bus node ID is free-form
+// (hostname-<rand>, or whatever the operator set via MM_CLUSTER_NODE_ID
+// such as a K8s Pod name), so we generate a dedicated Id for the
+// heartbeat row. The two identifiers serve different purposes — bus node
+// ID for loopback filtering on message envelopes, discovery row Id as an
+// opaque primary key — and nothing in our code correlates them.
 func (c *Cluster) startHeartbeat() {
 	if c.discoveryFactory == nil {
 		c.logger.Debug("Postgres cluster heartbeat skipped (no discovery factory wired)")
@@ -42,7 +50,7 @@ func (c *Cluster) startHeartbeat() {
 	}
 	ds := c.discoveryFactory()
 	ds.ClusterDiscovery = model.ClusterDiscovery{
-		Id:          c.node.ID,
+		Id:          model.NewId(),
 		Type:        discoveryType,
 		ClusterName: c.node.ClusterName,
 		Hostname:    c.node.Hostname,
