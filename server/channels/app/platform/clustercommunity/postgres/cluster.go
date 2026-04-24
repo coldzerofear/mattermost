@@ -188,6 +188,21 @@ func New(ps platformDeps, opts *Options) (*Cluster, error) {
 	}
 	cancelSchema()
 
+	// Wire the P2 RPC infrastructure and register handlers *here*, not in
+	// StartInterNodeCommunication. Reason: the upstream Server calls
+	// Channels().Start() before StartInterNodeCommunication, and plugin
+	// initialization during that window can trigger GetPluginStatuses /
+	// notifyPluginStatusesChanged, which dispatch into c.rpc.Broadcast.
+	// If c.rpc were nil at that point, we'd crash with a nil-pointer
+	// dereference. Handlers being registered before the listener loop runs
+	// is harmless — dispatch is driven by that loop, so nothing fires
+	// until StartInterNodeCommunication anyway.
+	c.rpc = bus.NewRPC(c, c.HandlerRegistry, c.logger)
+	bus.RegisterConfigReload(c, c.HandlerRegistry)
+	bus.RegisterClusterStats(c, c.rpc)
+	bus.RegisterWebConnCount(c, c.rpc)
+	bus.RegisterPluginStatuses(c, c.rpc)
+
 	return c, nil
 }
 
@@ -234,14 +249,9 @@ func (c *Cluster) StartInterNodeCommunication() {
 		return
 	}
 
-	// Wire shared P2 handlers. See the equivalent block in redis/cluster.go
-	// for rationale; both backends rely on bus/ for config reload, stats,
-	// and per-user webconn / plugin status aggregation.
-	c.rpc = bus.NewRPC(c, c.HandlerRegistry, c.logger)
-	bus.RegisterConfigReload(c, c.HandlerRegistry)
-	bus.RegisterClusterStats(c, c.rpc)
-	bus.RegisterWebConnCount(c, c.rpc)
-	bus.RegisterPluginStatuses(c, c.rpc)
+	// P2 RPC handlers are already wired in New(); see the comment there
+	// for the rationale (avoids nil rpc during Channels().Start() plugin
+	// bootstrap which calls into GetPluginStatuses before Start runs).
 
 	c.startHeartbeat()
 

@@ -106,7 +106,7 @@ func New(ps platformDeps, opts *Options) (*Cluster, error) {
 		return nil, err
 	}
 
-	return &Cluster{
+	c := &Cluster{
 		HandlerRegistry: bus.NewHandlerRegistry(),
 		ps:              ps,
 		opts:            opts,
@@ -115,7 +115,24 @@ func New(ps platformDeps, opts *Options) (*Cluster, error) {
 		cmdClient:       cmd,
 		subClient:       sub,
 		health:          &bus.HealthTracker{},
-	}, nil
+	}
+
+	// Wire the P2 RPC infrastructure and register handlers *here*, not in
+	// StartInterNodeCommunication. Reason: the upstream Server calls
+	// Channels().Start() before StartInterNodeCommunication, and plugin
+	// initialization during that window can trigger GetPluginStatuses /
+	// notifyPluginStatusesChanged, which dispatch into c.rpc.Broadcast.
+	// If c.rpc were nil at that point, we'd crash with a nil-pointer
+	// dereference. Handlers being registered before the subscribe loop
+	// runs is harmless — dispatch is driven by that loop, so nothing
+	// fires until StartInterNodeCommunication anyway.
+	c.rpc = bus.NewRPC(c, c.HandlerRegistry, c.logger)
+	bus.RegisterConfigReload(c, c.HandlerRegistry)
+	bus.RegisterClusterStats(c, c.rpc)
+	bus.RegisterWebConnCount(c, c.rpc)
+	bus.RegisterPluginStatuses(c, c.rpc)
+
+	return c, nil
 }
 
 // newRueidisClient is the single place we construct rueidis clients so both
@@ -172,14 +189,9 @@ func (c *Cluster) StartInterNodeCommunication() {
 	}
 	c.cancelCtx, c.cancelFn = context.WithCancel(context.Background())
 
-	// Wire shared P2 handlers before any messages flow. Handler registration
-	// itself is always safe, but installing them after Start would create a
-	// window where broadcasts could arrive before handlers are ready.
-	c.rpc = bus.NewRPC(c, c.HandlerRegistry, c.logger)
-	bus.RegisterConfigReload(c, c.HandlerRegistry)
-	bus.RegisterClusterStats(c, c.rpc)
-	bus.RegisterWebConnCount(c, c.rpc)
-	bus.RegisterPluginStatuses(c, c.rpc)
+	// P2 RPC handlers are already wired in New(); see the comment there
+	// for the rationale (avoids nil rpc during Channels().Start() plugin
+	// bootstrap which calls into GetPluginStatuses before Start runs).
 
 	// Write the first heartbeat synchronously so other nodes see us
 	// immediately; without this, the first external IsLeader check can
