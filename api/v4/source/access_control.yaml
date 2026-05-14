@@ -286,6 +286,16 @@
       tags:
         - access control
       summary: Activate or deactivate an access control policy
+      deprecated: true
+      description: |
+        This endpoint is deprecated. Use the POST /api/v4/access_control_policies/{policy_id}/activate instead.
+      responses:
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    post:
+      tags:
+        - access control
+      summary: Activate or deactivate an access control policy
       description: |
         Updates the active status of an access control policy.
         ##### Permissions
@@ -560,7 +570,7 @@
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VisualExpression" 
+                $ref: "#/components/schemas/VisualExpression"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":

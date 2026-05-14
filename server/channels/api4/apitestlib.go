@@ -107,7 +107,13 @@ func setupTestHelper(tb testing.TB, dbStore store.Store, sqlSettings *model.SqlS
 		consoleLevel = mlog.LvlStdLog.Name
 	}
 	*memoryConfig.LogSettings.ConsoleLevel = consoleLevel
-	*memoryConfig.LogSettings.FileLocation = filepath.Join(tempWorkspace, "logs", "mattermost.log")
+	// Use a subdirectory within the logging root (from MM_LOG_PATH or default)
+	// to ensure the path is within the allowed logging root for security validation.
+	// Each test gets its own subdirectory based on the tempWorkspace name for isolation.
+	testLogsDir := filepath.Join(config.GetLogRootPath(), filepath.Base(tempWorkspace))
+	err = os.MkdirAll(testLogsDir, 0700)
+	require.NoError(tb, err, "failed to create test logs directory")
+	*memoryConfig.LogSettings.FileLocation = testLogsDir
 	*memoryConfig.AnnouncementSettings.AdminNoticesEnabled = false
 	*memoryConfig.AnnouncementSettings.UserNoticesEnabled = false
 	*memoryConfig.PluginSettings.AutomaticPrepackagedPlugins = false
@@ -1164,9 +1170,9 @@ func GenerateTestID() string {
 func CheckUserSanitization(tb testing.TB, user *model.User) {
 	tb.Helper()
 
-	require.Equal(tb, "", user.Password, "password wasn't blank")
+	require.Empty(tb, user.Password, "password wasn't blank")
 	require.Empty(tb, user.AuthData, "auth data wasn't blank")
-	require.Equal(tb, "", user.MfaSecret, "mfa secret wasn't blank")
+	require.Empty(tb, user.MfaSecret, "mfa secret wasn't blank")
 }
 
 func CheckEtag(tb testing.TB, data any, resp *model.Response) {

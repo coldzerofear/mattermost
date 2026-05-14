@@ -56,6 +56,10 @@
     "translation": "Get fields limit is not valid."
   },
   {
+    "id": "api.access_control_policy.update_active_status.deprecated",
+    "translation": "This method is deprecated. Please use the POST method instead."
+  },
+  {
     "id": "api.acknowledgement.delete.archived_channel.app_error",
     "translation": "You cannot remove an acknowledgment in an archived channel."
   },
@@ -1260,10 +1264,6 @@
   {
     "id": "api.command_mute.no_channel.error",
     "translation": "Could not find the specified channel. Please use the [channel handle](https://docs.mattermost.com/messaging/managing-channels.html#naming-a-channel) to identify channels."
-  },
-  {
-    "id": "api.command_mute.not_member.error",
-    "translation": "Could not mute channel {{.Channel}} as you are not a member."
   },
   {
     "id": "api.command_mute.success_mute",
@@ -4381,6 +4381,10 @@
   {
     "id": "api.user.login_ldap.not_available.app_error",
     "translation": "AD/LDAP not available on this server."
+  },
+  {
+    "id": "api.user.login_sso_code_exchange.deprecated.app_error",
+    "translation": "This endpoint is deprecated and disabled. Please update your mobile app."
   },
   {
     "id": "api.user.login_with_desktop_token.not_oauth_or_saml_user.app_error",
@@ -7727,6 +7731,10 @@
   {
     "id": "app.update_error",
     "translation": "update error"
+  },
+  {
+    "id": "app.update_scheduled_post.convert_to_post.error",
+    "translation": "Unable to convert scheduled post to post format."
   },
   {
     "id": "app.update_scheduled_post.existing_scheduled_post.not_exist",

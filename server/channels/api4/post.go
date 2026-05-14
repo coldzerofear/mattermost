@@ -65,6 +65,13 @@ func createPostChecks(where string, c *Context, post *model.Post) {
 		return
 	}
 
+	if len(post.FileIds) > 0 {
+		if !c.App.SessionHasPermissionToChannel(c.AppContext, *c.AppContext.Session(), post.ChannelId, model.PermissionUploadFile) {
+			c.SetPermissionError(model.PermissionUploadFile)
+			return
+		}
+	}
+
 	postHardenedModeCheckWithContext(where, c, post.GetProps())
 	if c.Err != nil {
 		return
@@ -858,6 +865,10 @@ func updatePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// MM-67055: Strip client-supplied metadata.embeds to prevent spoofing.
+	// This matches createPost behavior.
+	post.SanitizeInput()
+
 	auditRec := c.MakeAuditRecord(model.AuditEventUpdatePost, model.AuditStatusFail)
 	model.AddEventParameterAuditableToAuditRec(auditRec, "post", &post)
 	defer c.LogAuditRecWithLevel(auditRec, app.LevelContent)
@@ -891,6 +902,12 @@ func updatePost(c *Context, w http.ResponseWriter, r *http.Request) {
 	// so, we restore the original file IDs in this case
 	if post.FileIds == nil {
 		post.FileIds = originalPost.FileIds
+	}
+
+	// Check upload_file permission only if update is adding NEW files (not just keeping existing ones)
+	checkUploadFilePermissionForNewFiles(c, post.FileIds, originalPost)
+	if c.Err != nil {
+		return
 	}
 
 	if c.AppContext.Session().UserId != originalPost.UserId {
@@ -948,6 +965,19 @@ func patchPost(c *Context, w http.ResponseWriter, r *http.Request) {
 	postPatchChecks(c, auditRec, post.Message)
 	if c.Err != nil {
 		return
+	}
+
+	originalPost, err := c.App.GetSinglePost(c.AppContext, c.Params.PostId, false)
+	if err != nil {
+		c.SetPermissionError(model.PermissionEditPost)
+		return
+	}
+
+	if post.FileIds != nil {
+		checkUploadFilePermissionForNewFiles(c, *post.FileIds, originalPost)
+		if c.Err != nil {
+			return
+		}
 	}
 
 	patchedPost, err := c.App.PatchPost(c.AppContext, c.Params.PostId, c.App.PostPatchWithProxyRemovedFromImageURLs(&post), nil)
