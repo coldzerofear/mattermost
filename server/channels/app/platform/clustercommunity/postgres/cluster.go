@@ -25,9 +25,15 @@ import (
 // dedicated connection (managed by pq.Listener), and the leader's advisory
 // lock holds one more, so the pool only needs to serve short INSERT / SELECT
 // / DELETE traffic from Send / handleNotify / gcLoop.
+//
+// Under high message rates (e.g. load tests with many concurrent users),
+// each SendClusterMessage call briefly holds a connection for INSERT+NOTIFY.
+// Keeping maxOpenConns at 8 causes BeginTx to queue and exceed its timeout
+// when more than 8 sends are in-flight simultaneously. 20 gives enough
+// headroom for bursts without over-provisioning PostgreSQL connections.
 const (
-	maxOpenConns = 8
-	maxIdleConns = 2
+	maxOpenConns = 20
+	maxIdleConns = 5
 	connLifetime = 10 * time.Minute
 )
 
@@ -363,8 +369,9 @@ func (c *Cluster) sendTo(target string, msg *model.ClusterMessage) error {
 	// is 26 lowercase alphanumeric chars, well within budget.
 	id := model.NewId()
 
-	// Tight timeout: the transaction is just an INSERT + pg_notify round trip.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// Timeout covers both connection-pool wait and INSERT+pg_notify execution.
+	// 5s gives enough room under burst load without blocking the caller indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	return c.insertAndNotify(ctx, id, target, payload, nowMS())
