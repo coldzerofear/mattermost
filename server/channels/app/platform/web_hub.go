@@ -21,7 +21,11 @@ import (
 )
 
 const (
-	broadcastQueueSize         = 4096
+	// broadcastQueueSize is the per-hub buffer for outbound WebSocket events.
+	// 4096 saturates easily at 100k users; 16384 gives ~4x headroom for burst
+	// traffic (e.g. a channel with many subscribers receiving a burst of posts).
+	broadcastQueueSize = 16384
+
 	inactiveConnReaperInterval = 5 * time.Minute
 )
 
@@ -66,7 +70,11 @@ type webConnCountMessage struct {
 	result chan int
 }
 
-var hubSemaphoreCount = runtime.NumCPU() * 4
+// hubSemaphoreCount caps concurrent ProcessAsync goroutines per hub.
+// Each goroutine holds a slot while waiting for WebConnCountForUser RPC (~1s).
+// At 100k users across NumCPU hubs: NumCPU*16 slots → 16x more concurrency
+// than the previous NumCPU*4, reducing disconnect-queue drain time proportionally.
+var hubSemaphoreCount = runtime.NumCPU() * 16
 
 // Hub is the central place to manage all websocket connections in the server.
 // It handles different websocket events and sending messages to individual

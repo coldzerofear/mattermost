@@ -408,13 +408,21 @@ func (ps *PlatformService) QueueSetStatusOffline(userID string, manual bool) {
 }
 
 const (
-	// statusUpdateBufferSize is intentionally larger than sendQueueSize:
-	// under high disconnect rates (e.g. load tests), the batch consumer
-	// flushes every 500ms and must absorb bursts without falling back to
-	// the synchronous _setStatusOfflineAndNotify path.
-	statusUpdateBufferSize     = sendQueueSize * 4 // 1024
-	statusUpdateFlushThreshold = statusUpdateBufferSize / 8
-	statusUpdateBatchInterval  = 500 * time.Millisecond
+	// statusUpdateBufferSize must absorb burst disconnects at scale.
+	// At 100k users, even a 10% simultaneous disconnect = 10k updates.
+	// 8192 gives enough runway for the batch consumer to drain before the
+	// channel fills and forces the slow synchronous fallback path.
+	statusUpdateBufferSize = 8192
+
+	// statusUpdateFlushThreshold triggers an early flush when the in-flight
+	// batch reaches this size. 512 keeps each DB SaveOrUpdateMany call at a
+	// reasonable row count while still amortising per-row overhead well.
+	statusUpdateFlushThreshold = 512
+
+	// statusUpdateBatchInterval caps the maximum age of a queued status
+	// update. 200ms is responsive enough for user-visible presence changes
+	// without flushing so often that the DB sees single-row writes.
+	statusUpdateBatchInterval = 200 * time.Millisecond
 )
 
 // processStatusUpdates processes status updates in batches for better performance
