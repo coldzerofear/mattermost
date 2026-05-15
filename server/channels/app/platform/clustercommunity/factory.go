@@ -90,5 +90,7 @@ func postgresAdapter(c *Config) *postgres.Options {
 		HeartbeatTTL:      c.HeartbeatTTL,
 		DSN:               c.PG.DSN,
 		ChannelName:       c.PG.ChannelName,
+		MaxConns:          c.PG.MaxConns,
+		WebConnRPCTimeout: c.PG.WebConnRPCTimeout,
 	}
 }

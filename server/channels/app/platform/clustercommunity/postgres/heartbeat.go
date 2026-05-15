@@ -76,9 +76,11 @@ func (c *Cluster) stopHeartbeat() {
 }
 
 // gcLoop runs DELETE against old cluster_messages rows on a fixed interval.
-// All nodes run this independently; the DELETE is idempotent so redundant
-// runs are harmless. We do NOT gate on IsLeader because losing the leader
-// while the table fills up is exactly when GC matters most.
+// Only the leader executes the DELETE; non-leaders skip the tick silently.
+// This avoids an N-pod DELETE stampede as the cluster scales horizontally:
+// without this guard, 10 pods would each issue the same DELETE every 30s,
+// multiplying write load by 10x. If the leader fails, a successor acquires
+// the advisory lock within leaderCheckInterval and resumes GC.
 func (c *Cluster) gcLoop() {
 	defer c.wg.Done()
 
@@ -88,7 +90,9 @@ func (c *Cluster) gcLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			c.gcOldMessages(c.cancelCtx, int64(messageRetention/time.Millisecond))
+			if c.IsLeader() {
+				c.gcOldMessages(c.cancelCtx, int64(messageRetention/time.Millisecond))
+			}
 		case <-c.cancelCtx.Done():
 			return
 		}

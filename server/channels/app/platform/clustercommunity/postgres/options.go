@@ -38,4 +38,15 @@ type Options struct {
 	// ChannelName is the PostgreSQL NOTIFY channel. All cluster nodes must
 	// agree. Defaults to "mm_cluster" when empty.
 	ChannelName string
+
+	// MaxConns is the maximum number of open connections in the cluster DB
+	// pool per pod. Total PostgreSQL connections ≈ (MaxConns + 2) × podCount.
+	// Tune this down when running many pods to stay within PostgreSQL
+	// max_connections. Defaults to 10 when zero or negative.
+	MaxConns int
+
+	// WebConnRPCTimeout caps how long WebConnCountForUser waits for all peers
+	// to respond before returning the partial count. Shorter values give faster
+	// offline-status transitions at the cost of missing slow pods. Default 1s.
+	WebConnRPCTimeout time.Duration
 }

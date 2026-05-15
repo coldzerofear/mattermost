@@ -50,6 +50,16 @@ type RedisConfig struct {
 type PGConfig struct {
 	DSN         string
 	ChannelName string
+
+	// MaxConns controls the per-pod cluster DB connection pool size.
+	// Total PG connections ≈ (MaxConns + 2) × replicaCount.
+	// Set via MM_CLUSTER_PG_MAX_CONNS; default 10.
+	MaxConns int
+
+	// WebConnRPCTimeout is the deadline for WebConnCountForUser to collect
+	// responses from all peers. Set via MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS
+	// (milliseconds); default 1000ms.
+	WebConnRPCTimeout time.Duration
 }
 
 // LoadConfigFromEnv reads MM_CLUSTER_* environment variables and returns a Config
@@ -71,8 +81,10 @@ func LoadConfigFromEnv() *Config {
 		KeyPrefix: getEnv("MM_CLUSTER_REDIS_KEY_PREFIX", "mm:cluster"),
 	}
 	c.PG = PGConfig{
-		DSN:         getEnv("MM_CLUSTER_PG_DSN", ""),
-		ChannelName: getEnv("MM_CLUSTER_PG_CHANNEL", "mm_cluster"),
+		DSN:               getEnv("MM_CLUSTER_PG_DSN", ""),
+		ChannelName:       getEnv("MM_CLUSTER_PG_CHANNEL", "mm_cluster"),
+		MaxConns:          getEnvInt("MM_CLUSTER_PG_MAX_CONNS", 10),
+		WebConnRPCTimeout: getEnvMs("MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS", 1000),
 	}
 	return c
 }
@@ -100,4 +112,13 @@ func getEnvSeconds(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+func getEnvMs(key string, defMs int) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return time.Duration(defMs) * time.Millisecond
 }

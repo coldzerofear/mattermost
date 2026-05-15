@@ -21,19 +21,17 @@ import (
 	"github.com/mattermost/mattermost/server/v8/channels/app/platform/clustercommunity/bus"
 )
 
-// Connection-pool sizing for the cluster DB. The listener has its own
-// dedicated connection (managed by pq.Listener), and the leader's advisory
-// lock holds one more, so the pool only needs to serve short INSERT / SELECT
-// / DELETE traffic from Send / handleNotify / gcLoop.
-//
-// Under high message rates (e.g. load tests with many concurrent users),
-// each SendClusterMessage call briefly holds a connection for INSERT+NOTIFY.
-// Keeping maxOpenConns at 8 causes BeginTx to queue and exceed its timeout
-// when more than 8 sends are in-flight simultaneously. 20 gives enough
-// headroom for bursts without over-provisioning PostgreSQL connections.
 const (
-	maxOpenConns = 20
-	maxIdleConns = 5
+	// defaultMaxConns is the fallback pool size when Options.MaxConns is zero.
+	// Each pod consumes defaultMaxConns + 2 PostgreSQL connections (listener +
+	// leader-lock). At 5 pods the cluster uses (10+2)×5 = 60 connections,
+	// well within PostgreSQL's default max_connections=100.
+	// Override per-deployment with MM_CLUSTER_PG_MAX_CONNS.
+	defaultMaxConns = 10
+
+	// defaultWebConnRPCTimeout is the fallback for Options.WebConnRPCTimeout.
+	defaultWebConnRPCTimeout = time.Second
+
 	connLifetime = 10 * time.Minute
 )
 
@@ -156,8 +154,12 @@ func New(ps platformDeps, opts *Options) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open postgres cluster db: %w", err)
 	}
-	db.SetMaxOpenConns(maxOpenConns)
-	db.SetMaxIdleConns(maxIdleConns)
+	maxOpen := opts.MaxConns
+	if maxOpen <= 0 {
+		maxOpen = defaultMaxConns
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(max(2, maxOpen/4)) // idle ≤ 25% of open, at least 2
 	db.SetConnMaxLifetime(connLifetime)
 
 	// Validate the DSN early. An invalid DSN that only fails on first real
@@ -467,7 +469,11 @@ func (c *Cluster) WebConnCountForUser(userID string) (int, *model.AppError) {
 	if expected < 0 {
 		expected = 0
 	}
-	return bus.CollectWebConnCount(c, c.rpc, userID, expected, time.Second)
+	timeout := c.opts.WebConnRPCTimeout
+	if timeout <= 0 {
+		timeout = defaultWebConnRPCTimeout
+	}
+	return bus.CollectWebConnCount(c, c.rpc, userID, expected, timeout)
 }
 
 func (c *Cluster) GetWSQueues(userID, connectionID string, seqNum int64) (map[string]*model.WSQueues, error) {

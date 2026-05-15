@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"math/rand"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/shared/mlog"
@@ -45,6 +46,19 @@ const (
 //     on transition via setLeader.
 func (c *Cluster) leaderLoop() {
 	defer c.wg.Done()
+
+	// Random initial delay in [0, leaderCheckInterval/2). Prevents a thundering
+	// herd of simultaneous pg_try_advisory_lock calls when all pods start at
+	// once (rolling update, cluster restart). Each pod acquires a DB connection
+	// for the lock attempt; without jitter, N pods all hit the DB at the same
+	// tick, creating a connection burst of N. With jitter, attempts are spread
+	// across up to 2.5s, smoothing the connection load.
+	jitter := time.Duration(rand.Int63n(int64(leaderCheckInterval / 2)))
+	select {
+	case <-time.After(jitter):
+	case <-c.cancelCtx.Done():
+		return
+	}
 
 	ticker := time.NewTicker(leaderCheckInterval)
 	defer ticker.Stop()
