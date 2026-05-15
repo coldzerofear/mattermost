@@ -476,15 +476,14 @@ func (h *Hub) SendMessage(conn *WebConn, msg model.WebSocketMessage) {
 	}
 }
 
-// ProcessAsync executes a function with hub-specific concurrency control
+// ProcessAsync executes a function with hub-specific concurrency control.
+// The semaphore is acquired inside the goroutine so this call never blocks
+// the hub's main select loop — blocking there would stall all message delivery.
 func (h *Hub) ProcessAsync(f func()) {
-	h.hubSemaphore <- struct{}{}
 	go func() {
-		defer func() {
-			<-h.hubSemaphore
-		}()
+		h.hubSemaphore <- struct{}{}
+		defer func() { <-h.hubSemaphore }()
 
-		// Add timeout protection
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -493,7 +492,6 @@ func (h *Hub) ProcessAsync(f func()) {
 
 		select {
 		case <-done:
-			// Function completed normally
 		case <-time.After(5 * time.Second):
 			h.platform.Log().Warn("ProcessAsync function timed out after 5 seconds")
 		}

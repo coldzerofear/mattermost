@@ -408,9 +408,13 @@ func (ps *PlatformService) QueueSetStatusOffline(userID string, manual bool) {
 }
 
 const (
-	statusUpdateBufferSize     = sendQueueSize // We use the webConn sendQueue size as a reference point for the buffer size.
+	// statusUpdateBufferSize is intentionally larger than sendQueueSize:
+	// under high disconnect rates (e.g. load tests), the batch consumer
+	// flushes every 500ms and must absorb bursts without falling back to
+	// the synchronous _setStatusOfflineAndNotify path.
+	statusUpdateBufferSize     = sendQueueSize * 4 // 1024
 	statusUpdateFlushThreshold = statusUpdateBufferSize / 8
-	statusUpdateBatchInterval  = 500 * time.Millisecond // Max time to wait before processing
+	statusUpdateBatchInterval  = 500 * time.Millisecond
 )
 
 // processStatusUpdates processes status updates in batches for better performance
