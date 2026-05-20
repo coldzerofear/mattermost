@@ -1192,7 +1192,26 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 			}
 		}
 	} else {
-		err = json.NewDecoder(tee).Decode(&ar)
+
+		if err = json.NewDecoder(tee).Decode(&ar); err != nil {
+			var ara *AccessResponseAdapter
+			if err = json.NewDecoder(tee).Decode(&ara); err == nil {
+				ar = &model.AccessResponse{
+					TokenType:    ara.TokenType,
+					AccessToken:  ara.AccessToken,
+					Scope:        ara.Scope,
+					RefreshToken: ara.RefreshToken,
+					IdToken:      ara.IdToken,
+					Audience:     ara.Audience,
+				}
+				if len(ara.ExpiresInSeconds) > 0 {
+					if seconds, err := strconv.ParseInt(ara.ExpiresInSeconds, 10, 32); err == nil {
+						ar.ExpiresInSeconds = int32(seconds)
+					}
+				}
+			}
+		}
+
 	}
 
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -1222,6 +1241,17 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 
 	// Note that userBody is not closed here, so it must be closed by the caller
 	return userBody, stateProps, userFromToken, nil
+}
+
+// TODO 兼容某些不规范响应体
+type AccessResponseAdapter struct {
+	AccessToken      string `json:"access_token"`
+	TokenType        string `json:"token_type"`
+	ExpiresInSeconds string `json:"expires_in"`
+	Scope            string `json:"scope"`
+	RefreshToken     string `json:"refresh_token"`
+	IdToken          string `json:"id_token"`
+	Audience         string `json:"audience,omitempty"`
 }
 
 type JingyiAccessResponse struct {

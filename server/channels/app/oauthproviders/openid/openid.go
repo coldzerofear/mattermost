@@ -100,6 +100,33 @@ func (u *JYUserInfo) getAuthData() string {
 	return fmt.Sprintf("%s-%s", model.ServiceOpenid, u.Data.EmpId)
 }
 
+type MHUserInfo struct {
+	ChkRslt string `json:"chkRslt"`
+	Code    string `json:"code,omitempty"`
+	EmpId   string `json:"empId"`
+	Name    string `json:"name"`
+	CertTp  string `json:"certTp"`
+	CertNo  string `json:"certNo"`
+	Mobile  string `json:"mobile"`
+}
+
+func (u *MHUserInfo) IsValid() error {
+	if u.ChkRslt != "1" {
+		return errors.New("check failed")
+	}
+	if u.EmpId == "" {
+		return errors.New("user emp-id should not be empty")
+	}
+	//if u.Data.MoblNo == "" {
+	//	return errors.New("user mobile phone number should not be empty")
+	//}
+	return nil
+}
+
+func (u *MHUserInfo) getAuthData() string {
+	return fmt.Sprintf("%s-%s", model.ServiceOpenid, u.EmpId)
+}
+
 func init() {
 	val := os.Getenv("SYSTEM_CODE")
 	if val == "" {
@@ -152,6 +179,31 @@ func userFromJYUserInfo(logger mlog.LoggerIFace, info *JYUserInfo) *model.User {
 		}
 	}
 	user.Email = strings.ToLower(info.Data.EmpId + "@zjrcu.com")
+	userId := info.getAuthData()
+	user.AuthData = &userId
+	user.AuthService = model.ServiceOpenid
+	return user
+}
+
+func userFromMHUserInfo(logger mlog.LoggerIFace, info *MHUserInfo) *model.User {
+	user := &model.User{}
+	user.Username = model.CleanUsername(logger, info.EmpId)
+	splitName := strings.Split(info.Name, " ")
+	if len(splitName) == 2 {
+		user.FirstName = splitName[0]
+		user.LastName = splitName[1]
+	} else if len(splitName) >= 2 {
+		user.FirstName = splitName[0]
+		user.LastName = strings.Join(splitName[1:], " ")
+	} else {
+		user.FirstName = info.Name
+	}
+	if info.Mobile != "" {
+		user.Props = model.StringMap{
+			"MOBL_NO": info.Mobile,
+		}
+	}
+	user.Email = strings.ToLower(info.EmpId + "@zjrcu.com")
 	userId := info.getAuthData()
 	user.AuthData = &userId
 	user.AuthService = model.ServiceOpenid
@@ -323,6 +375,14 @@ func (op *OpenidProvider) GetUserFromJSON(rctx request.CTX, data io.Reader, toke
 			return userFromJYUserInfo(rctx.Logger(), &jyInfo), nil
 		}
 	}
+
+	var mhInfo MHUserInfo
+	if err = json.Unmarshal(raw, &mhInfo); err == nil {
+		if err = mhInfo.IsValid(); err == nil {
+			return userFromMHUserInfo(rctx.Logger(), &mhInfo), nil
+		}
+	}
+
 	return nil, err
 }
 
