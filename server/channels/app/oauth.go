@@ -1207,7 +1207,8 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 
 		if err = json.NewDecoder(tee).Decode(&ar); err != nil {
 			var ara *AccessResponseAdapter
-			if err = json.NewDecoder(tee).Decode(&ara); err == nil {
+			buffer := bytes.NewBuffer(buf.Bytes())
+			if err = json.NewDecoder(buffer).Decode(&ara); err == nil {
 				ar = &model.AccessResponse{
 					TokenType:    ara.TokenType,
 					AccessToken:  ara.AccessToken,
@@ -1217,7 +1218,8 @@ func (a *App) AuthorizeOAuthUser(rctx request.CTX, w http.ResponseWriter, r *htt
 					Audience:     ara.Audience,
 				}
 				if len(ara.ExpiresInSeconds) > 0 {
-					if seconds, err := strconv.ParseInt(ara.ExpiresInSeconds, 10, 32); err == nil {
+					seconds, parseErr := strconv.ParseInt(ara.ExpiresInSeconds, 10, 32)
+					if parseErr == nil {
 						ar.ExpiresInSeconds = int32(seconds)
 					}
 				}
@@ -1261,8 +1263,8 @@ type AccessResponseAdapter struct {
 	TokenType        string `json:"token_type"`
 	ExpiresInSeconds string `json:"expires_in"`
 	Scope            string `json:"scope"`
-	RefreshToken     string `json:"refresh_token"`
-	IdToken          string `json:"id_token"`
+	RefreshToken     string `json:"refresh_token,omitempty"`
+	IdToken          string `json:"id_token,omitempty"`
 	Audience         string `json:"audience,omitempty"`
 }
 
