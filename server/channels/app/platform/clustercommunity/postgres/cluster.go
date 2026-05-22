@@ -111,6 +111,14 @@ type Cluster struct {
 	// the WebSocket broadcast hot-path from PG round-trip latency under
 	// 10w-user-scale load. When sendCh is full, messages are dropped and
 	// counted in sendDropped — back-pressure beats blocking the caller.
+	//
+	// sendMu guards the *assignment* of sendCh during Start, so concurrent
+	// enqueueSend calls see a fully-published channel (or nil pre-Start).
+	// sendCh itself is never closed: workers drain and exit when cancelCtx
+	// is done. Closing the channel would create a send-on-closed race with
+	// concurrent enqueueSend, since `select case ch <- v` panics on a closed
+	// channel even with a default branch.
+	sendMu      sync.RWMutex
 	sendCh      chan sendTask
 	sendWg      sync.WaitGroup
 	sendDropped atomic.Int64
@@ -288,10 +296,15 @@ func (c *Cluster) StartInterNodeCommunication() {
 	if workers <= 0 {
 		workers = 8
 	}
-	c.sendCh = make(chan sendTask, queueSize)
+	// Publish sendCh under the lock so enqueueSend either sees nil
+	// (pre-Start fallback to directSend) or the fully-constructed channel.
+	sendCh := make(chan sendTask, queueSize)
+	c.sendMu.Lock()
+	c.sendCh = sendCh
+	c.sendMu.Unlock()
 	for i := 0; i < workers; i++ {
 		c.sendWg.Add(1)
-		go c.sendWorker()
+		go c.sendWorker(sendCh)
 	}
 
 	c.wg.Add(3)
@@ -323,12 +336,13 @@ func (c *Cluster) StopInterNodeCommunication() {
 	}
 	c.stopHeartbeat()
 
-	// Close the send queue and wait for in-flight messages to drain so we
-	// don't lose enqueued cluster events on a graceful shutdown.
-	if c.sendCh != nil {
-		close(c.sendCh)
-		c.sendWg.Wait()
-	}
+	// Workers exit on cancelCtx.Done() (already triggered above) after
+	// draining whatever is left in sendCh. We deliberately don't close
+	// sendCh — that would race with concurrent enqueueSend in the
+	// select-with-default and panic. Leaving the channel open lets
+	// post-Stop SendClusterMessage calls fill the buffer harmlessly until
+	// process exit reclaims the memory.
+	c.sendWg.Wait()
 
 	c.wg.Wait()
 
@@ -410,6 +424,10 @@ func (c *Cluster) SendClusterMessageToNode(nodeID string, msg *model.ClusterMess
 
 // enqueueSend encodes the envelope and tries to push it onto sendCh. Returns
 // false when the queue is full or the cluster has not been started yet.
+//
+// The RLock around the channel read is purely a memory-visibility fence with
+// the Start-side Lock — it does NOT guard against close, because sendCh is
+// never closed (see the comment on the Cluster struct).
 func (c *Cluster) enqueueSend(target string, msg *model.ClusterMessage) bool {
 	payload, err := bus.Encode(c.node.ID, target, msg)
 	if err != nil {
@@ -419,15 +437,20 @@ func (c *Cluster) enqueueSend(target string, msg *model.ClusterMessage) bool {
 		return false
 	}
 
-	if c.sendCh == nil {
-		// StartInterNodeCommunication hasn't run (or has stopped) — fall back
-		// to a direct synchronous send so handlers registered for the test
-		// helper still work. Production callers always race after Start.
-		return c.directSend(target, payload, msg) == nil
+	c.sendMu.RLock()
+	sendCh := c.sendCh
+	c.sendMu.RUnlock()
+
+	if sendCh == nil {
+		// StartInterNodeCommunication hasn't run yet (typically because a
+		// plugin loaded during Channels().Start() is calling into cluster
+		// methods before the worker pool exists). Fall back to a direct
+		// synchronous send — c.db is already initialized by New().
+		return c.directSend(target, payload) == nil
 	}
 
 	select {
-	case c.sendCh <- sendTask{target: target, payload: payload}:
+	case sendCh <- sendTask{target: target, payload: payload}:
 		return true
 	default:
 		dropped := c.sendDropped.Add(1)
@@ -447,23 +470,51 @@ func (c *Cluster) enqueueSend(target string, msg *model.ClusterMessage) bool {
 // pool connection per message via insertAndNotify (now a single-statement
 // CTE — see storage.go), so concurrent in-flight DB work is bounded by the
 // worker count, not by the caller count.
-func (c *Cluster) sendWorker() {
+//
+// The worker takes sendCh as an argument rather than reading c.sendCh so
+// the captured reference is unambiguous (Start always passes the same
+// channel it just assigned to c.sendCh). On Stop, cancelCtx.Done() fires,
+// the worker drains whatever is left in the channel non-blockingly, then
+// returns. After all workers return, sendWg unblocks Stop.
+func (c *Cluster) sendWorker(sendCh <-chan sendTask) {
 	defer c.sendWg.Done()
-	for task := range c.sendCh {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := c.insertAndNotify(ctx, model.NewId(), task.target, task.payload, nowMS()); err != nil {
-			c.health.RecordFailure()
-			c.logger.Error("Failed to publish postgres cluster message", mlog.Err(err))
-		} else {
-			c.health.RecordSuccess()
+	for {
+		select {
+		case task := <-sendCh:
+			c.runSendTask(task)
+		case <-c.cancelCtx.Done():
+			// Drain anything still queued so a graceful Stop doesn't drop
+			// already-accepted messages. Items enqueued *after* this drain
+			// completes are lost — acceptable for best-effort cluster
+			// broadcasts and far better than panicking on close.
+			for {
+				select {
+				case task := <-sendCh:
+					c.runSendTask(task)
+				default:
+					return
+				}
+			}
 		}
-		cancel()
 	}
 }
 
-// directSend is the pre-Start fallback path used by unit tests that exercise
-// SendClusterMessage without spinning up the worker pool.
-func (c *Cluster) directSend(target string, payload []byte, _ *model.ClusterMessage) error {
+func (c *Cluster) runSendTask(task sendTask) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.insertAndNotify(ctx, model.NewId(), task.target, task.payload, nowMS()); err != nil {
+		c.health.RecordFailure()
+		c.logger.Error("Failed to publish postgres cluster message", mlog.Err(err))
+		return
+	}
+	c.health.RecordSuccess()
+}
+
+// directSend is the pre-Start fallback used when a plugin or boot-time
+// handler emits a cluster message before the worker pool is up. It performs
+// the same single-statement INSERT+NOTIFY synchronously on the caller
+// goroutine.
+func (c *Cluster) directSend(target string, payload []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return c.insertAndNotify(ctx, model.NewId(), target, payload, nowMS())
