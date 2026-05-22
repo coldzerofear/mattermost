@@ -51,6 +51,8 @@ MM_CLUSTER_REDIS_ADDR=redis:6379
 | `MM_CLUSTER_PG_DSN` | 空（复用主库 DSN） | 集群专用 PostgreSQL DSN，空则使用 Mattermost 主库 |
 | `MM_CLUSTER_PG_CHANNEL` | `mm_cluster` | LISTEN/NOTIFY 频道名，同一集群必须一致 |
 | `MM_CLUSTER_PG_MAX_CONNS` | `10` | 每个 Pod 的集群 DB 连接池上限 |
+| `MM_CLUSTER_PG_SEND_QUEUE_SIZE` | `8192` | 异步发送队列长度，吸收瞬时 burst |
+| `MM_CLUSTER_PG_SEND_WORKERS` | `8` | 从队列消费写入 DB 的 worker 协程数 |
 | `MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS` | `1000` | WebSocket 连接数 RPC 超时（毫秒） |
 
 ### Redis 专用参数
@@ -84,10 +86,16 @@ max_connections ≥ (MaxConns + 2) × maxPods + 主库连接数 + 20（余量）
 
 ### 各规模推荐配置
 
-#### 2–5 个副本
+> **重要前提**：发送侧是异步队列 + Worker 池模型。caller（WebSocket 广播）
+> 把消息塞进队列就返回，由 `MM_CLUSTER_PG_SEND_WORKERS` 个协程从队列拉取
+> 写入 DB。**并发 PG 连接占用 ≈ Worker 数**，不再随用户并发线性增长。
+
+#### 2–5 个副本（< 5w 用户）
 
 ```bash
 MM_CLUSTER_PG_MAX_CONNS=10               # 5 Pod × 12 = 60 条连接
+MM_CLUSTER_PG_SEND_QUEUE_SIZE=8192       # 默认即可
+MM_CLUSTER_PG_SEND_WORKERS=8             # 默认即可
 MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS=1000
 ```
 
@@ -96,32 +104,41 @@ PostgreSQL 配置：
 max_connections = 200    # 60 集群 + ~100 主库 + 40 余量
 ```
 
-#### 5–10 个副本
+#### 5–10 个副本（5w–10w 用户）
 
 ```bash
-MM_CLUSTER_PG_MAX_CONNS=8                # 10 Pod × 10 = 100 条连接
+MM_CLUSTER_PG_MAX_CONNS=15               # 10 Pod × 17 = 170 条连接
+MM_CLUSTER_PG_SEND_QUEUE_SIZE=16384      # 大用户量需要更大缓冲吸收 burst
+MM_CLUSTER_PG_SEND_WORKERS=12            # 增加并发写入吞吐
 MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS=800    # K8s 内网延迟低，可缩短
 ```
 
 PostgreSQL 配置：
 ```
-max_connections = 300
+max_connections = 400
 ```
 
-#### 10–20 个副本
+#### 10–20 个副本（> 10w 用户）
 
 ```bash
-MM_CLUSTER_PG_MAX_CONNS=5                # 20 Pod × 7 = 140 条连接
+MM_CLUSTER_PG_MAX_CONNS=10               # 20 Pod × 12 = 240 条连接
+MM_CLUSTER_PG_SEND_QUEUE_SIZE=32768
+MM_CLUSTER_PG_SEND_WORKERS=16            # 不要超过 24，否则 NotifyQueueLock 反咬
 MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS=600
 ```
 
 PostgreSQL 配置：
 ```
-max_connections = 400
+max_connections = 500
 # 强烈建议在 PostgreSQL 前部署 PgBouncer（transaction 模式）
 ```
 
-> **超过 10 个副本时**，建议在 Mattermost 与 PostgreSQL 之间部署 PgBouncer（transaction pooling 模式），将实际 PostgreSQL 连接数压缩 5–10 倍。
+> **超过 10 个副本时**，建议在 Mattermost 与 PostgreSQL 之间部署 PgBouncer
+> （transaction pooling 模式），将实际 PostgreSQL 连接数压缩 5–10 倍。
+>
+> **如果用户量超过 10w 且消息频繁**：PostgreSQL 的 `NotifyQueueLock` 是全集群
+> 串行化的硬瓶颈，加 Pod 解决不了。强烈建议切换到 `MM_CLUSTER_MODE=redis`，
+> Redis Pub/Sub 单实例就能支撑 10w+ msg/s。
 
 ---
 
@@ -142,6 +159,10 @@ env:
         fieldPath: metadata.name
   - name: MM_CLUSTER_PG_MAX_CONNS
     value: "10"
+  - name: MM_CLUSTER_PG_SEND_QUEUE_SIZE
+    value: "8192"
+  - name: MM_CLUSTER_PG_SEND_WORKERS
+    value: "8"
   - name: MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS
     value: "800"
 ```
@@ -181,17 +202,32 @@ annotations:
 ### PostgreSQL 模式
 
 ```
-发送方 Pod                        接收方 Pod
-──────────                        ──────────
+发送方 Pod                                 接收方 Pod
+──────────                                 ──────────
 SendClusterMessage()
-  └─ INSERT cluster_messages       pq.Listener.Notify 触发
-  └─ SELECT pg_notify(channel, id) └─ SELECT payload FROM cluster_messages
-  └─ COMMIT                        └─ bus.Decode → Dispatch → Handler
+  └─ bus.Encode(envelope)
+  └─ sendCh <- task          (异步入队)    pq.Listener.Notify 触发
+                                           └─ SELECT payload FROM cluster_messages
+sendWorker (× N)                           └─ bus.Decode → Dispatch → Handler
+  └─ ExecContext(CTE):
+       WITH ins AS (INSERT ... RETURNING id)
+       SELECT pg_notify(channel, ins.id) FROM ins
+     （单语句 1 次往返完成 INSERT + NOTIFY + 隐式 COMMIT）
 ```
 
-**Leader 选举**：`pg_try_advisory_lock`，持有锁的 Pod 为 Leader，断连时 PostgreSQL 自动释放，后继者在 5 秒内接管。
+**异步管线**：caller 只做 encode + chan send，不等 DB。`SendWorkers` 个协程
+从 `sendCh` 消费写入 PG。caller 路径完全无阻塞，PG 并发连接占用受控于
+worker 数。队列满时直接丢弃 + 累计计数，避免阻塞业务线程。
 
-**GC**：只有 Leader 每 30 秒清理 5 分钟前的 `cluster_messages` 行，避免多 Pod 并发 DELETE 放大写压力。
+**单语句 CTE**：原实现每条消息要做 BEGIN/INSERT/NOTIFY/COMMIT 四次往返，
+现在折叠为单条 CTE 语句，DB 往返次数从 4 降到 1。PostgreSQL 对单语句的隐式
+事务保证 NOTIFY 在 INSERT 提交后才对订阅者可见。
+
+**Leader 选举**：`pg_try_advisory_lock`，持有锁的 Pod 为 Leader，断连时
+PostgreSQL 自动释放，后继者在 5 秒内接管。
+
+**GC**：只有 Leader 每 30 秒清理 5 分钟前的 `cluster_messages` 行，避免多
+Pod 并发 DELETE 放大写压力。
 
 ### Redis 模式
 
@@ -229,9 +265,24 @@ PUBLISH mm:cluster:node:<id>      SUBSCRIBE mm:cluster:node:<self>
 
 默认和 Mattermost 主库在同一个数据库。如需隔离，设置 `MM_CLUSTER_PG_DSN` 指向单独的数据库。
 
-**Q：看到 `Failed to publish postgres cluster message: begin tx: context deadline exceeded`**
+**Q：看到 `Failed to publish postgres cluster message`（worker 写 DB 失败）**
 
-PostgreSQL 连接池已满。减小 `MM_CLUSTER_PG_MAX_CONNS` 或增大 PostgreSQL `max_connections`；高并发场景建议部署 PgBouncer。
+worker 实际写 PG 时报错。原 `begin tx: context deadline exceeded` 问题已经
+通过 CTE 单语句改造解决（不再有 BEGIN/COMMIT）。如果仍然报错，通常是
+PostgreSQL 自身压力（连接、IOPS、`NotifyQueueLock`），按以下顺序排查：
+
+1. `SELECT count(*) FROM pg_stat_activity WHERE datname='<your-db>'` 看连接数是否打满
+2. 加大 `MM_CLUSTER_PG_SEND_WORKERS` 提高消费速度（不超过 24）
+3. 加大 `MM_CLUSTER_PG_SEND_QUEUE_SIZE` 给突发流量留缓冲
+4. 用户量超 10w 时切到 `MM_CLUSTER_MODE=redis`
+
+**Q：看到 `Postgres cluster send queue full; dropping message`**
+
+异步发送队列被打满，正在丢弃 BestEffort 类消息。短时间偶发可接受；持续
+出现说明 worker 处理速度跟不上消息产生速度。处理顺序同上一问。
+
+被丢的消息不影响持久化数据（帖子已经写入主库），只影响其他副本的实时
+推送——丢的用户可能要等下次同步才看到消息。
 
 **Q：看到 `Status update channel is full. Falling back to direct update`**
 
