@@ -24,39 +24,28 @@ func (c *Cluster) ensureSchema(ctx context.Context) error {
 	return nil
 }
 
-// insertAndNotify atomically writes a row and queues a NOTIFY. The NOTIFY is
-// buffered by PostgreSQL until COMMIT, guaranteeing that any listener woken
-// by the notification can observe the row via SELECT (no read-after-write
-// race).
-//
-// pg_notify(channel, payload) is used instead of literal `NOTIFY <channel>,
-// '<payload>'` because it accepts parameters cleanly; raw NOTIFY would
-// require string concatenation and careful escaping.
+// insertAndNotifyCTE folds INSERT + pg_notify into a single statement.
+// PostgreSQL wraps any standalone statement in an implicit transaction, so
+// the NOTIFY is queued and only released to subscribers when the implicit
+// COMMIT happens — i.e. after the row is durably written. This eliminates
+// three round-trips (BEGIN, separate NOTIFY, COMMIT) compared to the
+// previous transaction-based implementation, cutting per-message latency
+// from 4 RTT to 1 RTT.
+const insertAndNotifyCTE = `
+	WITH ins AS (
+		INSERT INTO cluster_messages (id, target, payload, created_at)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	)
+	SELECT pg_notify($5, ins.id) FROM ins
+`
+
+// insertAndNotify writes a row and triggers a NOTIFY in a single round-trip.
 func (c *Cluster) insertAndNotify(ctx context.Context, id, target string, payload []byte, createdAtMS int64) error {
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	// Rollback is a no-op after Commit succeeds; safe to defer unconditionally.
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO cluster_messages (id, target, payload, created_at)
-		 VALUES ($1, $2, $3, $4)`,
-		id, target, payload, createdAtMS,
+	if _, err := c.db.ExecContext(ctx, insertAndNotifyCTE,
+		id, target, payload, createdAtMS, c.opts.ChannelName,
 	); err != nil {
-		return fmt.Errorf("insert cluster_messages: %w", err)
-	}
-
-	if _, err = tx.ExecContext(ctx,
-		`SELECT pg_notify($1, $2)`,
-		c.opts.ChannelName, id,
-	); err != nil {
-		return fmt.Errorf("pg_notify: %w", err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("insert+notify: %w", err)
 	}
 	return nil
 }

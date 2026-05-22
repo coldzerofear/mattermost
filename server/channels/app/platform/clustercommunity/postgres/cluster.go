@@ -105,6 +105,23 @@ type Cluster struct {
 	// Initialized in StartInterNodeCommunication so tests that skip Start
 	// still see a usable Cluster.
 	rpc *bus.RPC
+
+	// Asynchronous send pipeline. SendClusterMessage enqueues onto sendCh
+	// without blocking; sendWorkers drain it into PostgreSQL. This decouples
+	// the WebSocket broadcast hot-path from PG round-trip latency under
+	// 10w-user-scale load. When sendCh is full, messages are dropped and
+	// counted in sendDropped — back-pressure beats blocking the caller.
+	sendCh      chan sendTask
+	sendWg      sync.WaitGroup
+	sendDropped atomic.Int64
+}
+
+// sendTask is the unit of work for the async send pipeline. payload is the
+// already-encoded envelope (encoding happens on the caller goroutine so the
+// worker only does I/O).
+type sendTask struct {
+	target  string
+	payload []byte
 }
 
 // New constructs a postgres.Cluster. Returns an error if the DSN cannot be
@@ -263,6 +280,20 @@ func (c *Cluster) StartInterNodeCommunication() {
 
 	c.startHeartbeat()
 
+	queueSize := c.opts.SendQueueSize
+	if queueSize <= 0 {
+		queueSize = 8192
+	}
+	workers := c.opts.SendWorkers
+	if workers <= 0 {
+		workers = 8
+	}
+	c.sendCh = make(chan sendTask, queueSize)
+	for i := 0; i < workers; i++ {
+		c.sendWg.Add(1)
+		go c.sendWorker()
+	}
+
 	c.wg.Add(3)
 	go c.listenerLoop()
 	go c.leaderLoop()
@@ -271,7 +302,9 @@ func (c *Cluster) StartInterNodeCommunication() {
 	c.logger.Info("Postgres community cluster started",
 		mlog.String("node_id", c.node.ID),
 		mlog.String("channel", c.opts.ChannelName),
-		mlog.String("cluster_name", c.node.ClusterName))
+		mlog.String("cluster_name", c.node.ClusterName),
+		mlog.Int("send_queue_size", queueSize),
+		mlog.Int("send_workers", workers))
 }
 
 func (c *Cluster) StopInterNodeCommunication() {
@@ -290,7 +323,19 @@ func (c *Cluster) StopInterNodeCommunication() {
 	}
 	c.stopHeartbeat()
 
+	// Close the send queue and wait for in-flight messages to drain so we
+	// don't lose enqueued cluster events on a graceful shutdown.
+	if c.sendCh != nil {
+		close(c.sendCh)
+		c.sendWg.Wait()
+	}
+
 	c.wg.Wait()
+
+	if dropped := c.sendDropped.Load(); dropped > 0 {
+		c.logger.Warn("Postgres cluster shed messages while queue was saturated",
+			mlog.Int("dropped_total", dropped))
+	}
 
 	if err := c.db.Close(); err != nil {
 		c.logger.Warn("Failed to close postgres cluster db pool", mlog.Err(err))
@@ -337,46 +382,91 @@ func (c *Cluster) GetClusterInfos() ([]*model.ClusterInfo, error) {
 }
 
 // --- ClusterInterface: send -----------------------------------------------
+//
+// SendClusterMessage and SendClusterMessageToNode are asynchronous: encoding
+// happens on the caller goroutine, then the payload is enqueued onto sendCh.
+// A pool of sendWorker goroutines drains the queue into PostgreSQL. This
+// design keeps the WebSocket broadcast hot-path free of DB latency, and bounds
+// PG connection pressure to the worker count instead of the caller count.
+//
+// When the queue is full, messages are dropped rather than blocking — the
+// ClusterMessage.SendType=ClusterSendBestEffort semantics that Mattermost
+// uses for most events explicitly allows this. The dropped counter is logged
+// periodically so operators can detect sustained overload.
 
 func (c *Cluster) SendClusterMessage(msg *model.ClusterMessage) {
-	if err := c.sendTo("", msg); err != nil {
-		c.health.RecordFailure()
-		c.logger.Error("Failed to publish postgres cluster message",
-			mlog.String("event", string(msg.Event)),
-			mlog.Err(err))
-		return
-	}
-	c.health.RecordSuccess()
+	c.enqueueSend("", msg)
 }
 
 func (c *Cluster) SendClusterMessageToNode(nodeID string, msg *model.ClusterMessage) error {
 	if nodeID == "" {
 		return fmt.Errorf("postgres cluster: empty target node ID")
 	}
-	if err := c.sendTo(nodeID, msg); err != nil {
-		c.health.RecordFailure()
-		return err
+	if !c.enqueueSend(nodeID, msg) {
+		return fmt.Errorf("postgres cluster: send queue full")
 	}
-	c.health.RecordSuccess()
 	return nil
 }
 
-func (c *Cluster) sendTo(target string, msg *model.ClusterMessage) error {
+// enqueueSend encodes the envelope and tries to push it onto sendCh. Returns
+// false when the queue is full or the cluster has not been started yet.
+func (c *Cluster) enqueueSend(target string, msg *model.ClusterMessage) bool {
 	payload, err := bus.Encode(c.node.ID, target, msg)
 	if err != nil {
-		return fmt.Errorf("encode envelope: %w", err)
+		c.logger.Warn("Failed to encode cluster envelope",
+			mlog.String("event", string(msg.Event)),
+			mlog.Err(err))
+		return false
 	}
 
-	// The id has to fit the VARCHAR(32) column and be globally unique. NewId
-	// is 26 lowercase alphanumeric chars, well within budget.
-	id := model.NewId()
+	if c.sendCh == nil {
+		// StartInterNodeCommunication hasn't run (or has stopped) — fall back
+		// to a direct synchronous send so handlers registered for the test
+		// helper still work. Production callers always race after Start.
+		return c.directSend(target, payload, msg) == nil
+	}
 
-	// Timeout covers both connection-pool wait and INSERT+pg_notify execution.
-	// 5s gives enough room under burst load without blocking the caller indefinitely.
+	select {
+	case c.sendCh <- sendTask{target: target, payload: payload}:
+		return true
+	default:
+		dropped := c.sendDropped.Add(1)
+		c.health.RecordFailure()
+		// Throttle the warning: one in every 1000 drops is enough to surface
+		// the condition without flooding logs during sustained overload.
+		if dropped == 1 || dropped%1000 == 0 {
+			c.logger.Warn("Postgres cluster send queue full; dropping message",
+				mlog.String("event", string(msg.Event)),
+				mlog.Int("dropped_total", dropped))
+		}
+		return false
+	}
+}
+
+// sendWorker drains sendCh into PostgreSQL. Each worker briefly holds one
+// pool connection per message via insertAndNotify (now a single-statement
+// CTE — see storage.go), so concurrent in-flight DB work is bounded by the
+// worker count, not by the caller count.
+func (c *Cluster) sendWorker() {
+	defer c.sendWg.Done()
+	for task := range c.sendCh {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := c.insertAndNotify(ctx, model.NewId(), task.target, task.payload, nowMS()); err != nil {
+			c.health.RecordFailure()
+			c.logger.Error("Failed to publish postgres cluster message", mlog.Err(err))
+		} else {
+			c.health.RecordSuccess()
+		}
+		cancel()
+	}
+}
+
+// directSend is the pre-Start fallback path used by unit tests that exercise
+// SendClusterMessage without spinning up the worker pool.
+func (c *Cluster) directSend(target string, payload []byte, _ *model.ClusterMessage) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	return c.insertAndNotify(ctx, id, target, payload, nowMS())
+	return c.insertAndNotify(ctx, model.NewId(), target, payload, nowMS())
 }
 
 // NotifyMsg allows external code to inject raw envelope bytes into the

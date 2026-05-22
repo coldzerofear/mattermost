@@ -60,6 +60,14 @@ type PGConfig struct {
 	// responses from all peers. Set via MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS
 	// (milliseconds); default 1000ms.
 	WebConnRPCTimeout time.Duration
+
+	// SendQueueSize is the in-memory backlog of outbound cluster messages
+	// per pod. Set via MM_CLUSTER_PG_SEND_QUEUE_SIZE; default 8192.
+	SendQueueSize int
+
+	// SendWorkers is the number of goroutines flushing the send queue to
+	// PostgreSQL concurrently. Set via MM_CLUSTER_PG_SEND_WORKERS; default 8.
+	SendWorkers int
 }
 
 // LoadConfigFromEnv reads MM_CLUSTER_* environment variables and returns a Config
@@ -85,6 +93,8 @@ func LoadConfigFromEnv() *Config {
 		ChannelName:       getEnv("MM_CLUSTER_PG_CHANNEL", "mm_cluster"),
 		MaxConns:          getEnvInt("MM_CLUSTER_PG_MAX_CONNS", 10),
 		WebConnRPCTimeout: getEnvMs("MM_CLUSTER_WEBCONN_RPC_TIMEOUT_MS", 1000),
+		SendQueueSize:     getEnvInt("MM_CLUSTER_PG_SEND_QUEUE_SIZE", 8192),
+		SendWorkers:       getEnvInt("MM_CLUSTER_PG_SEND_WORKERS", 8),
 	}
 	return c
 }

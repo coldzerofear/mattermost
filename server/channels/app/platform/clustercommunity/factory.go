@@ -92,5 +92,7 @@ func postgresAdapter(c *Config) *postgres.Options {
 		ChannelName:       c.PG.ChannelName,
 		MaxConns:          c.PG.MaxConns,
 		WebConnRPCTimeout: c.PG.WebConnRPCTimeout,
+		SendQueueSize:     c.PG.SendQueueSize,
+		SendWorkers:       c.PG.SendWorkers,
 	}
 }

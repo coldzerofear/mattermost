@@ -49,4 +49,14 @@ type Options struct {
 	// to respond before returning the partial count. Shorter values give faster
 	// offline-status transitions at the cost of missing slow pods. Default 1s.
 	WebConnRPCTimeout time.Duration
+
+	// SendQueueSize is the in-memory backlog of outgoing cluster messages.
+	// Bigger queues absorb larger send bursts at the cost of memory and
+	// potentially-stale delivery on the receiving side. Default 8192.
+	SendQueueSize int
+
+	// SendWorkers is the number of goroutines draining the send queue into
+	// PostgreSQL concurrently. Each worker briefly holds one connection per
+	// message, so SendWorkers ≤ MaxConns is a soft invariant. Default 8.
+	SendWorkers int
 }
