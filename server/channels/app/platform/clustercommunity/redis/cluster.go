@@ -117,6 +117,15 @@ func New(ps platformDeps, opts *Options) (*Cluster, error) {
 		health:          &bus.HealthTracker{},
 	}
 
+	// Initialize cancelCtx *here*, not in StartInterNodeCommunication, for the
+	// same reason the RPC wiring below is done here: Channels().Start() runs
+	// before StartInterNodeCommunication, and plugin initialization during that
+	// window calls GetPluginStatuses -> GetClusterInfos -> scanAllNodeIDs, all
+	// of which read c.cancelCtx. If it were still nil, context.WithTimeout would
+	// panic with "cannot create context from nil parent". StartInterNodeCommunication
+	// re-creates it on (re)start, so restart-after-stop semantics are unchanged.
+	c.cancelCtx, c.cancelFn = context.WithCancel(context.Background())
+
 	// Wire the P2 RPC infrastructure and register handlers *here*, not in
 	// StartInterNodeCommunication. Reason: the upstream Server calls
 	// Channels().Start() before StartInterNodeCommunication, and plugin
