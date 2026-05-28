@@ -76,13 +76,6 @@ type Cluster struct {
 	started     atomic.Bool
 	health      *bus.HealthTracker
 
-	// peerCount is the number of live OTHER nodes seen by the most recent
-	// leaderLoop SCAN (i.e. total live nodes - 1 for self). Updated every
-	// leaderCheckInterval. Read on every disconnect via WebConnCountForUser
-	// to size the RPC fan-out without doing a SCAN+GET on the hot path —
-	// 5s staleness is fine since CollectWebConnCount has its own 1s timeout.
-	peerCount atomic.Int32
-
 	// rpc handles request/response flows for P2 methods (GetClusterStats).
 	// Initialized lazily so tests that don't call StartInterNodeCommunication
 	// still see a usable Cluster.
@@ -308,10 +301,7 @@ func (c *Cluster) LocalStats() *model.ClusterStats {
 // helper. The return always includes this node's stats; peers that fail to
 // respond within the timeout are simply absent from the slice.
 func (c *Cluster) GetClusterStats(rctx request.CTX) ([]*model.ClusterStats, *model.AppError) {
-	// expected uses the cached peer count refreshed by leaderLoop; the RPC
-	// helper's timeout bounds the wait if the count is briefly stale.
-	expected := int(c.peerCount.Load())
-	return bus.CollectClusterStats(c, c.rpc, expected, 2*time.Second)
+	return bus.CollectClusterStats(c, c.rpc, c.expectedPeers(), 2*time.Second)
 }
 
 func (c *Cluster) GetLogs(rctx request.CTX, page, perPage int) ([]string, *model.AppError) {
@@ -331,8 +321,7 @@ func (c *Cluster) GenerateSupportPacket(rctx request.CTX, options *model.Support
 // statuses, so we do NOT include self-data here — sending it would produce
 // duplicated entries in the System Console UI.
 func (c *Cluster) GetPluginStatuses() (model.PluginStatuses, *model.AppError) {
-	expected := int(c.peerCount.Load())
-	return bus.CollectPluginStatuses(c, c.rpc, expected, 2*time.Second)
+	return bus.CollectPluginStatuses(c, c.rpc, c.expectedPeers(), 2*time.Second)
 }
 
 // ConfigChanged broadcasts a lightweight "reload" signal whenever an admin
@@ -358,14 +347,7 @@ func (c *Cluster) ConfigChanged(previousConfig, newConfig *model.Config, sendToO
 // inactive-connection reaper; delaying that would defer presence updates
 // for every user whose last socket just closed.
 func (c *Cluster) WebConnCountForUser(userID string) (int, *model.AppError) {
-	// Read the cached peer count (refreshed every leaderCheckInterval by
-	// leaderLoop). Avoids a SCAN + N×GET against Redis on every disconnect,
-	// which under stress was driving cmdClient saturation, "ProcessAsync
-	// timed out" and statusUpdateChan-full fallbacks. CollectWebConnCount
-	// short-circuits to (0, nil) when expected==0, so single-node and
-	// pre-Start states pay nothing.
-	expected := int(c.peerCount.Load())
-	return bus.CollectWebConnCount(c, c.rpc, userID, expected, time.Second)
+	return bus.CollectWebConnCount(c, c.rpc, userID, c.expectedPeers(), time.Second)
 }
 
 func (c *Cluster) GetWSQueues(userID, connectionID string, seqNum int64) (map[string]*model.WSQueues, error) {

@@ -122,15 +122,6 @@ func (c *Cluster) recomputeLeader() {
 		c.setLeader(false, "")
 		return
 	}
-	// Refresh the peer-count cache before leadership math. Hot-path callers
-	// (WebConnCountForUser, GetClusterStats, GetPluginStatuses) read this
-	// instead of triggering their own SCAN+GET per request.
-	peers := len(ids) - 1
-	if peers < 0 {
-		peers = 0
-	}
-	c.peerCount.Store(int32(peers))
-
 	if len(ids) == 0 {
 		// No keys at all — unusual since our own heartbeat should be there.
 		// Possible right after SCAN runs during key eviction; defer.
@@ -163,6 +154,27 @@ func (c *Cluster) setLeader(isLeader bool, leaderID string) {
 		mlog.String("leader_id", leaderID),
 		mlog.Bool("is_leader", isLeader))
 	c.ps.InvokeClusterLeaderChangedListeners()
+}
+
+// expectedPeers returns the number of live OTHER nodes (total - self) via a
+// single SCAN (no per-key GET). It sizes the RPC fan-out for WebConnCountForUser
+// / GetClusterStats / GetPluginStatuses. We deliberately do NOT cache this:
+// an under-count (missing a peer that joined since the last refresh) would make
+// WebConnCountForUser wait for too few replies and wrongly mark a user offline.
+// SCAN-only is cheap enough for the per-disconnect hot path; it was the N
+// sequential GETs in GetClusterInfos — not the SCAN — that saturated cmdClient
+// under stress. On scan error we return 0, which the bus collectors treat as
+// "no peers" and short-circuit.
+func (c *Cluster) expectedPeers() int {
+	ids, err := c.scanAllNodeIDs(c.cancelCtx)
+	if err != nil {
+		return 0
+	}
+	n := len(ids) - 1
+	if n < 0 {
+		n = 0
+	}
+	return n
 }
 
 // scanAllNodeIDs walks every <prefix>:nodes:<id> key currently in Redis and
