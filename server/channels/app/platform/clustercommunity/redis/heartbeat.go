@@ -122,6 +122,15 @@ func (c *Cluster) recomputeLeader() {
 		c.setLeader(false, "")
 		return
 	}
+	// Refresh the peer-count cache before leadership math. Hot-path callers
+	// (WebConnCountForUser, GetClusterStats, GetPluginStatuses) read this
+	// instead of triggering their own SCAN+GET per request.
+	peers := len(ids) - 1
+	if peers < 0 {
+		peers = 0
+	}
+	c.peerCount.Store(int32(peers))
+
 	if len(ids) == 0 {
 		// No keys at all — unusual since our own heartbeat should be there.
 		// Possible right after SCAN runs during key eviction; defer.
