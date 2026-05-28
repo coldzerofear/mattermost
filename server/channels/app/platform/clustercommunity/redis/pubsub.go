@@ -129,14 +129,20 @@ func (c *Cluster) subscribeLoop() {
 			c.health.RecordFailure()
 			c.logger.Error("Redis cluster subscribe interrupted, reconnecting",
 				mlog.Err(err))
-			// Small backoff before reconnect; prevents a hot loop when Redis
-			// is down. 2s is long enough to let transient blips recover
-			// without noticeably delaying real reconnects.
-			select {
-			case <-time.After(2 * time.Second):
-			case <-c.cancelCtx.Done():
-				return
-			}
+		} else {
+			// Receive returning nil without cancellation is unexpected for
+			// rueidis but defensively treat it as a clean re-subscribe rather
+			// than spinning the loop.
+			c.logger.Warn("Redis cluster subscribe returned without error; re-subscribing")
+		}
+		// Always back off before the next Subscribe — covers both the err
+		// path (Redis down / transient blip) and the unexpected nil-err
+		// path (prevents a hot loop). 2s lets transient blips recover
+		// without noticeably delaying real reconnects.
+		select {
+		case <-time.After(2 * time.Second):
+		case <-c.cancelCtx.Done():
+			return
 		}
 	}
 }

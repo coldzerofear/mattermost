@@ -122,9 +122,19 @@ func New(ps platformDeps, opts *Options) (*Cluster, error) {
 	// before StartInterNodeCommunication, and plugin initialization during that
 	// window calls GetPluginStatuses -> GetClusterInfos -> scanAllNodeIDs, all
 	// of which read c.cancelCtx. If it were still nil, context.WithTimeout would
-	// panic with "cannot create context from nil parent". StartInterNodeCommunication
-	// re-creates it on (re)start, so restart-after-stop semantics are unchanged.
+	// panic with "cannot create context from nil parent". Stop calls cancelFn
+	// on this same context, so loop goroutines exit cleanly.
 	c.cancelCtx, c.cancelFn = context.WithCancel(context.Background())
+
+	// Config sanity check: TTL must outlast at least one heartbeat tick, or a
+	// node's own key expires before it can refresh, causing it to drop out of
+	// the node set and leader election to flap. Only warn when both values
+	// are explicitly set; the zero-value defaults (10s/30s) are safe.
+	if opts.HeartbeatInterval > 0 && opts.HeartbeatTTL > 0 && opts.HeartbeatTTL <= opts.HeartbeatInterval {
+		c.logger.Warn("Redis cluster: HeartbeatTTL is not greater than HeartbeatInterval; leader election may flap",
+			mlog.Duration("heartbeat_interval", opts.HeartbeatInterval),
+			mlog.Duration("heartbeat_ttl", opts.HeartbeatTTL))
+	}
 
 	// Wire the P2 RPC infrastructure and register handlers *here*, not in
 	// StartInterNodeCommunication. Reason: the upstream Server calls
@@ -196,11 +206,17 @@ func (c *Cluster) StartInterNodeCommunication() {
 	if !c.started.CompareAndSwap(false, true) {
 		return
 	}
-	c.cancelCtx, c.cancelFn = context.WithCancel(context.Background())
 
-	// P2 RPC handlers are already wired in New(); see the comment there
-	// for the rationale (avoids nil rpc during Channels().Start() plugin
-	// bootstrap which calls into GetPluginStatuses before Start runs).
+	// cancelCtx is already initialized in New() — do not re-create it here, or
+	// we'd leak the original cancelFn. P2 RPC handlers are also wired in New();
+	// see the comment there for the rationale (avoids nil rpc during
+	// Channels().Start() plugin bootstrap which calls into GetPluginStatuses
+	// before Start runs).
+	//
+	// Note: StopInterNodeCommunication closes the underlying Redis clients,
+	// so this Cluster instance is single-shot — a second Start would operate
+	// on closed clients. Production only calls Stop at server shutdown, so
+	// this is acceptable.
 
 	// Write the first heartbeat synchronously so other nodes see us
 	// immediately; without this, the first external IsLeader check can
